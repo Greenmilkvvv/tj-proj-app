@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 import requests
 
 # 目标的经纬度
-NINGBO_LAT = 29.866465
-NINGBO_LON = 121.52707
+LAT = 29.866465
+LON = 121.52707
 
 
 # %%
@@ -21,7 +21,7 @@ def fetch_current_weather(lat, lon):
         "current": "shortwave_radiation,cloudcover,rain,temperature,wind_speed_10m",
         "timezone": "Asia/Shanghai",
     }
-    r = requests.get(url, params=params, timeout=20)
+    r = requests.get(url, params=params, timeout=60)
     r.raise_for_status()
     js = r.json()
     
@@ -47,8 +47,8 @@ def fetch_weather_data():
     """从 Open-Meteo 获取实时 + 预报数据"""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": NINGBO_LAT,
-        "longitude": NINGBO_LON,
+        "latitude": LAT,
+        "longitude": LON,
         "minutely_15": "shortwave_radiation,cloudcover,rain",
         "forecast_days": 1,
         "timezone": "Asia/Shanghai",
@@ -113,8 +113,6 @@ def fetch_weather_data():
     }
 
 
-
-
 def get_warning_message(has_warning, forecast_df):
     """生成预警文本"""
     if has_warning:
@@ -170,10 +168,10 @@ def create_radiation_plot(weather_data):
     fig.update_layout(
         title="太阳辐射强度与云层覆盖率",
         xaxis=dict(title="时间"),
-        yaxis=dict(title="辐射强度 (W/m²)", titlefont=dict(color="orange")),
+        yaxis=dict(title="辐射强度 (W/m²)", tickfont=dict(color="orange")),
         yaxis2=dict(
             title="云量 (%)",
-            titlefont=dict(color="gray"),
+            tickfont=dict(color="gray"),
             overlaying="y",
             side="right",
             range=[0, 100]
@@ -186,9 +184,13 @@ def create_radiation_plot(weather_data):
 
 
 # %%
-# ========== 2. 创建 UI 并绑定更新函数 ==========
+# ========== 创建 UI 并绑定更新函数 ==========
 def update_weather_ui():
     """刷新整个气象模块的 UI"""
+    # 当前数据
+    # current_data = fetch_current_weather(lat=LAT, lon=LON)
+
+    # 2h 数据
     weather_data = fetch_weather_data()
     
     # 更新辐照度曲线图
@@ -209,53 +211,9 @@ def update_weather_ui():
     return radiation_plot, warning_html, forecast_display, realtime_info
 
 
+
 # %%
-# ========== 3. Gradio UI 代码 ==========
-# 在你的主 UI 中添加以下内容
-
-# 假设你已经在之前的代码中创建了 demo
-with gr.Blocks(title="光储充一体化智能预测平台", css=custom_css, theme=gr.themes.Soft()) as demo:
-    # ... 前面的代码（左侧边栏、Tab1、Tab2等）...
-    
-    # ---------- Tab 3: 气象与环境 ----------
-    with gr.TabItem("🌤️ 气象与环境"):
-        with gr.Row():
-            with gr.Column():
-                gr.Markdown("### ☀️ 辐照度与云量")
-                # 替换为动态更新的 Plot
-                radiation_plot = gr.Plot(label="辐照度与云量曲线")
-                
-            with gr.Column():
-                gr.Markdown("### ⚠️ 天气预警")
-                # 替换为动态更新的 HTML
-                warning_html = gr.HTML(value="加载中...")
-                
-                gr.Markdown("---")
-                gr.Markdown("### 📅 未来2小时预报")
-                # 替换为动态更新的 DataFrame
-                forecast_table = gr.Dataframe(
-                    headers=["时间", "天气", "辐照度 (W/m²)", "降雨量 (mm)"],
-                    interactive=False
-                )
-                
-                # 可选：显示实时数据的小卡片
-                gr.Markdown("---")
-                realtime_info = gr.Markdown("### 实时数据加载中...")
-    
-    # 添加刷新按钮到气象模块内部（或复用左侧的全局刷新按钮）
-    with gr.Row():
-        refresh_weather_btn = gr.Button("🔄 刷新气象数据", variant="secondary")
-    
-    # 绑定更新事件
-    refresh_weather_btn.click(
-        fn=update_weather_ui,
-        inputs=[],
-        outputs=[radiation_plot, warning_html, forecast_table, realtime_info]
-    )
-    
-    # 页面加载时自动刷新一次
-    demo.load(fn=update_weather_ui, outputs=[radiation_plot, warning_html, forecast_table, realtime_info])
-
-# 启动
 if __name__ == "__main__":
-    demo.launch()
+    radiation_plot = update_weather_ui()[0]
+    radiation_plot.show()
+

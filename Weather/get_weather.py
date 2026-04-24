@@ -49,6 +49,7 @@ def fetch_weather_data():
     params = {
         "latitude": LAT,
         "longitude": LON,
+        "current": "shortwave_radiation,cloudcover,rain", # 
         "minutely_15": "shortwave_radiation,cloudcover,rain",
         "forecast_days": 1,
         "timezone": "Asia/Shanghai",
@@ -57,6 +58,11 @@ def fetch_weather_data():
     r.raise_for_status()
     js = r.json()
     
+    # 当前数据
+    current = js.get("current", {})
+    current_time = pd.to_datetime(current.get("time"))
+
+    # 获取预报数据
     times = pd.to_datetime(js["minutely_15"]["time"])
     radiations = js["minutely_15"]["shortwave_radiation"]
     cloudcovers = js["minutely_15"]["cloudcover"]
@@ -64,20 +70,31 @@ def fetch_weather_data():
     
     # 找到当前时刻（取最新数据点）
     now = pd.Timestamp.now(tz="Asia/Shanghai")
-    now_hour = now.floor("15min")  # 对齐到整点
+    now_time = now.floor("15min")  # 对齐到整点
+    
+    # 确保所有时间对象都有相同的时区信息
+    times = pd.Series(times)
+    times = times.dt.tz_localize("Asia/Shanghai")
     
     # 找到最接近当前小时的数据索引
-    idx = (times - now_hour).abs().argmin() if now_hour in times.values else 0
-    
+    # idx = (times - now_time).abs().argmin() if now_time in times.values else 0
+    # 找到最接近当前时间的数据索引
+    try:
+        # 尝试找到当前时间在times中的位置
+        idx = (times - now_time).abs().argmin()
+    except:
+        # 如果出错，使用0作为默认值
+        idx = 0
+
     current_radiation = radiations[idx] if radiations[idx] is not None else 0
     current_cloudcover = cloudcovers[idx] if cloudcovers[idx] is not None else 0
     
     # 构建未来2小时预报 DataFrame
     forecast_df = pd.DataFrame({
-        "时间": [times[i].strftime("%H:%M") for i in range(idx, min(idx+3, len(times)))],
-        "辐照度 (W/m²)": [radiations[i] if radiations[i] is not None else 0 for i in range(idx, min(idx+3, len(times)))],
-        "云量 (%)": [cloudcovers[i] if cloudcovers[i] is not None else 0 for i in range(idx, min(idx+3, len(times)))],
-        "降雨量 (mm)": [rains[i] if rains[i] is not None else 0 for i in range(idx, min(idx+3, len(times)))]
+        "时间": [times[i].strftime("%H:%M") for i in range(idx, min(idx+3*4, len(times)))],
+        "辐照度 (W/m²)": [radiations[i] if radiations[i] is not None else 0 for i in range(idx, min(idx+3*4, len(times)))],
+        "云量 (%)": [cloudcovers[i] if cloudcovers[i] is not None else 0 for i in range(idx, min(idx+3*4, len(times)))],
+        "降雨量 (mm)": [rains[i] if rains[i] is not None else 0 for i in range(idx, min(idx+3*4, len(times)))]
     })
     
     # 天气状况文字描述
@@ -134,6 +151,10 @@ def get_warning_message(has_warning, forecast_df):
         当前无恶劣天气预警，光伏出力条件良好
         </div>
         """
+
+# data = fetch_weather_data()
+# print(data)
+
 
 
 # %%

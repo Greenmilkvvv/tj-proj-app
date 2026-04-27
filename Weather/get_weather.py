@@ -138,7 +138,7 @@ def get_warning_message(has_warning, forecast_df):
         time_str = forecast_df.loc[max_rain_idx, "时间"]
         rain_val = forecast_df.loc[max_rain_idx, "降雨量 (mm)"]
         return f"""
-        <div class='warning-banner' style='background-color:#ffebee; border-left-color:#f44336;'>
+        <div style='background-color:#ffebee; border-left:4px solid #f44336; padding:12px; margin:8px 0; color:#333333;'>
         🚨 <strong>天气预警</strong><br>
         ⚠️ 预计 {time_str} 有强降雨 ({rain_val:.1f}mm/h)<br>
         📉 光伏出力预计骤降，建议提前调整储能策略以应对充电负荷
@@ -146,7 +146,7 @@ def get_warning_message(has_warning, forecast_df):
         """
     else:
         return """
-        <div class='warning-banner' style='background-color:#e8f5e9; border-left-color:#4caf50;'>
+        <div style='background-color:#e8f5e9; border-left:4px solid #4caf50; padding:12px; margin:8px 0; color:#333333;'>
         🟢 <strong>天气正常</strong><br>
         当前无恶劣天气预警，光伏出力条件良好
         </div>

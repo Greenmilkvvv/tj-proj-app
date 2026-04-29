@@ -124,7 +124,7 @@ def solar_forecast_tab():
         avg_power = np.mean(predictions) if predictions else 0
         
         stats_html = f"""
-        <div style='background:#f5f5f5; border-radius:8px; padding:15px;'>
+        <div style='background:#f5f5f5; border-radius:8px; padding:15px; margin:8px 0; color:#333333;'>
         <h3 style='margin-top:0;'>📊 预测统计</h3>
         <table style='width:100%;'>
         <tr><td>🔆 峰值功率:</td><td><b>{peak_power:.1f} kW</b></td></tr>
@@ -193,7 +193,7 @@ def charging_forecast_tab():
         total_demand = sum(predictions) * (forecast_hours / len(predictions))
         
         stats_html = f"""
-        <div style='background:#f5f5f5; border-radius:8px; padding:15px;'>
+        <div style='background:#f5f5f5; border-radius:8px; padding:15px; margin:8px 0; color:#333333;'>
         <h3 style='margin-top:0;'>📊 预测统计</h3>
         <table style='width:100%;'>
         <tr><td>🔌 峰值负荷:</td><td><b>{peak_load:.1f} kW</b></td></tr>

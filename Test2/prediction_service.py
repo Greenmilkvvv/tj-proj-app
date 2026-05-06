@@ -60,14 +60,16 @@ def load_solar_model():
         return None
 
     try:
-        from NN import CNN_LSTM
-        model = CNN_LSTM(
-            input_size=5,
+        from NN import GeneratorWithFeatures
+        model = GeneratorWithFeatures(
+            input_size=SOLAR_FEATURE_DIM,
             hidden_size=128,
             num_layers=2,
             output_size=1,
             dropout=0.2,
             bidirectional=False,
+            cnn_channels=[64, 64],
+            kernel_size=3,
         )
         state_dict = torch.load(SOLAR_MODEL_PTH, map_location=DEVICE, weights_only=True)
         model.load_state_dict(state_dict)

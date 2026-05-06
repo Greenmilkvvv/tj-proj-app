@@ -285,10 +285,10 @@ def build_data_tab():
     daily_chart = gr.Plot(label="日负荷曲线")
 
     gr.Markdown("### 📊 特征相关性分析")
-    corr_chart = gr.Plot(label="Pearson 相关系数")
+    corr_chart = gr.Plot(label="Pearson 相关系数", value=get_correlation_chart())
 
     gr.Markdown("### ⏰ 小时级负荷画像")
-    hourly_chart = gr.Plot(label="均值 ± 1σ")
+    hourly_chart = gr.Plot(label="均值 ± 1σ", value=get_hourly_profile_chart())
 
     # 事件绑定
     date_selector.change(
@@ -346,10 +346,10 @@ def create_app():
         gr.HTML(
             f"""
             <div style="text-align:center; margin-bottom:20px;">
-                <h1 style="font-size:28px; color:#2c3e50; margin-bottom:4px;">
+                <h1 style="font-size:28px; margin-bottom:4px;">
                     ☀️🔋⚡ {APP_TITLE}
                 </h1>
-                <p style="font-size:14px; color:#7f8c8d;">
+                <p style="font-size:14px; opacity:0.7;">
                     光伏预测 (CNN-LSTM) | 充电负荷预测 (TCN-Attention-LSTM) | 历史数据探索
                 </p>
             </div>

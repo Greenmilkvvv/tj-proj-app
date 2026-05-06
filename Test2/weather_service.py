@@ -25,7 +25,7 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "shortwave_radiation,cloudcover,rain",
+        "current": "temperature_2m,shortwave_radiation,cloudcover,rain",
         "minutely_15": "shortwave_radiation,cloudcover,rain",
         "forecast_days": 1,
         "timezone": "Asia/Shanghai",
@@ -62,6 +62,9 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
         current_radiation = radiations[idx] if radiations[idx] is not None else 0
         current_cloudcover = cloudcovers[idx] if cloudcovers[idx] is not None else 0
         current_rain = rains[idx] if rains[idx] is not None else 0
+        current_temp = current.get("temperature_2m")
+        if current_temp is None:
+            current_temp = "—"
 
         # 构建未来3小时预报 (12步)
         end_idx = min(idx + 12, len(times))
@@ -101,6 +104,7 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
 
         return {
             "current_time": current.get("time", str(now)),
+            "current_temp": current_temp,
             "current_radiation": current_radiation,
             "current_cloudcover": current_cloudcover,
             "current_rain": current_rain,
@@ -117,12 +121,12 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
 
 
 def _build_warning(has_warning, forecast_df):
-    """生成预警 HTML 文本"""
+    """生成预警 HTML 文本 (theme-adaptive: no hardcoded text color)"""
     if has_warning:
         max_row = forecast_df.loc[forecast_df["降雨量 (mm)"].idxmax()]
         return (
-            f"<div style='background:#fff3cd; border-left:4px solid #ffc107; "
-            f"padding:12px; margin:8px 0; border-radius:4px; color:#333;'>"
+            f"<div style='background:rgba(255,193,7,0.12); border-left:4px solid #ffc107; "
+            f"padding:12px; margin:8px 0; border-radius:4px;'>"
             f"🚨 <strong>天气预警</strong><br>"
             f"⚠️ 预计 {max_row['时间']} 有强降雨 ({max_row['降雨量 (mm)']:.1f} mm/h)<br>"
             f"📉 光伏出力可能骤降，请关注充电策略调整"
@@ -130,8 +134,8 @@ def _build_warning(has_warning, forecast_df):
         )
     else:
         return (
-            "<div style='background:#d4edda; border-left:4px solid #28a745; "
-            "padding:12px; margin:8px 0; border-radius:4px; color:#333;'>"
+            "<div style='background:rgba(40,167,69,0.12); border-left:4px solid #28a745; "
+            "padding:12px; margin:8px 0; border-radius:4px;'>"
             "🟢 <strong>天气正常</strong> — 当前无恶劣天气预警，光伏出力条件良好"
             "</div>"
         )
@@ -183,32 +187,39 @@ def build_radiation_chart(weather_data):
 
 
 def get_current_weather_summary(weather_data):
-    """当前气象概览 HTML"""
+    """当前气象概览 HTML (theme-adaptive: no hardcoded dark text colors)"""
     if weather_data is None:
         return "<div style='color:#dc3545;'>⚠️ 气象数据获取失败，请检查网络连接</div>"
 
+    # 温度格式化
+    current_temp = weather_data.get("current_temp", "—")
+    if isinstance(current_temp, (int, float)):
+        temp_display = f"{current_temp:.1f}°C"
+    else:
+        temp_display = f"{current_temp}°C"
+
     return f"""
     <div style='display:grid; grid-template-columns: repeat(4, 1fr); gap:12px;'>
-        <div style='background:#e3f2fd; border-radius:8px; padding:14px; text-align:center;'>
-            <div style='font-size:12px; color:#666;'>🌡️ 温度</div>
-            <div style='font-size:24px; font-weight:bold; color:#1976d2;'>—°C</div>
+        <div style='background:rgba(25,118,210,0.10); border-radius:8px; padding:14px; text-align:center;'>
+            <div style='font-size:12px; opacity:0.7;'>🌡️ 温度</div>
+            <div style='font-size:24px; font-weight:bold; color:#1976d2;'>{temp_display}</div>
         </div>
-        <div style='background:#fff3e0; border-radius:8px; padding:14px; text-align:center;'>
-            <div style='font-size:12px; color:#666;'>☁️ 云量</div>
+        <div style='background:rgba(230,81,0,0.10); border-radius:8px; padding:14px; text-align:center;'>
+            <div style='font-size:12px; opacity:0.7;'>☁️ 云量</div>
             <div style='font-size:24px; font-weight:bold; color:#e65100;'>{weather_data['current_cloudcover']}%</div>
         </div>
-        <div style='background:#fff8e1; border-radius:8px; padding:14px; text-align:center;'>
-            <div style='font-size:12px; color:#666;'>☀️ 辐照度</div>
+        <div style='background:rgba(245,127,23,0.10); border-radius:8px; padding:14px; text-align:center;'>
+            <div style='font-size:12px; opacity:0.7;'>☀️ 辐照度</div>
             <div style='font-size:24px; font-weight:bold; color:#f57f17;'>{weather_data['current_radiation']}</div>
-            <div style='font-size:11px; color:#999;'>W/m²</div>
+            <div style='font-size:11px; opacity:0.5;'>W/m²</div>
         </div>
-        <div style='background:#e8f5e9; border-radius:8px; padding:14px; text-align:center;'>
-            <div style='font-size:12px; color:#666;'>🌧️ 降雨</div>
+        <div style='background:rgba(46,125,50,0.10); border-radius:8px; padding:14px; text-align:center;'>
+            <div style='font-size:12px; opacity:0.7;'>🌧️ 降雨</div>
             <div style='font-size:24px; font-weight:bold; color:#2e7d32;'>{weather_data['current_rain']}</div>
-            <div style='font-size:11px; color:#999;'>mm/h</div>
+            <div style='font-size:11px; opacity:0.5;'>mm/h</div>
         </div>
     </div>
-    <div style='margin-top:8px; font-size:12px; color:#999; text-align:right;'>
+    <div style='margin-top:8px; font-size:12px; opacity:0.5; text-align:right;'>
         📅 数据时间: {weather_data['current_time']}
     </div>
     """

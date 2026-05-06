@@ -39,10 +39,10 @@ WEATHER_TIMEOUT = 20  # 秒
 SOLAR_LOOKBACK = 24        # 光伏模型输入窗口 (步, 15min/步 = 6h)
 CHARGING_LOOKBACK = 96     # 充电模型输入窗口 (步, 15min/步 = 24h)
 MC_DROPOUT_SAMPLES = 30    # MC Dropout 采样次数
-SOLAR_FEATURE_DIM = 5      # 光伏模型输入特征数
-CHARGING_FEATURE_DIM = 6   # 充电模型输入特征数
+SOLAR_FEATURE_DIM = 7      # 光伏模型输入特征数 (由 best_generator.pth weight_ih_l0 [512,7] 确认)
+CHARGING_FEATURE_DIM = 6   # 充电模型输入特征数 (由 tcn.0.conv.weight [64,6,3] 确认)
 
-# 光伏模型使用的特征列 (aligned CSV)
+# 光伏模型使用的特征列 (aligned CSV, 训练时7维但 aligned CSV 可能只有5维可用列)
 SOLAR_FEATURE_COLS = [
     "power",
     "hour_sin",

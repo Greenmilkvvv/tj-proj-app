@@ -1,0 +1,12 @@
+===== 诊断开始 =====
+1. 导入成功
+2. 光伏pth存在: True
+   keys数: 10, 前3: ['lstm_model.lstm.weight_ih_l0', 'lstm_model.lstm.weight_hh_l0', 'lstm_model.lstm.bias_ih_l0']
+   GeneratorWithFeatures 失败: GeneratorWithFeatures.__init__() takes 2 positional arguments but 9 were given
+   CNN_LSTM 也失败: Error(s) in loading state_dict for CNN_LSTM:
+	Missing key(s) in state_dict: "cnn.0.weight", "cnn.0.bias", "cnn.1.weight", "cnn.1.bias", "cnn.1.running_mean", "cnn.1.running_var", "cnn.4.weight", "cnn.4.bias", "cnn.5.weight", "cnn.5.bias", "cnn.5.running_mean", "cnn.5.running_var", "lstm.weight_ih_l0", "lstm.weight_hh_l0", "lstm.bias_ih_l0", "lstm.bias_hh_l0", "lstm.weight_ih_l1", "lstm.weight_hh_l1", "lstm.bias_ih_l1", "lstm.bias_hh_l1", "fc.weight", "fc.bias". 
+	Unexpected key(s) in state_dict: "lstm_model.lstm.weight_ih_l0", "lstm_model.lstm.weight_hh_l0", "lstm_model.lstm.bias_ih_l0", "lstm_model.lstm.bias_hh_l0", "lstm_model.lstm.weight_ih_l1", "lstm_model.lstm.weight_hh_l1", "lstm_model.lstm.bias_ih_l1", "lstm_model.lstm.bias_hh_l1", "lstm_model.fc.weight", "lstm_model.fc.bias". 
+3. 充电pth存在: True
+   keys数: 19, 前3: ['tcn.0.conv.weight', 'tcn.0.conv.bias', 'tcn.0.residual.weight']
+   keys全部: ['tcn.0.conv.weight', 'tcn.0.conv.bias', 'tcn.0.residual.weight', 'tcn.0.residual.bias', 'tcn.1.conv.weight', 'tcn.1.conv.bias', 'tcn.2.conv.weight', 'tcn.2.conv.bias', 'tcn.3.conv.weight', 'tcn.3.conv.bias', 'tcn.4.conv.weight', 'tcn.4.conv.bias', 'attention.attn_weights', 'lstm.weight_ih_l0', 'lstm.weight_hh_l0', 'lstm.bias_ih_l0', 'lstm.bias_hh_l0', 'fc.weight', 'fc.bias']
+===== 诊断结束 =====

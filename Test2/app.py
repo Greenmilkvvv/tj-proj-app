@@ -61,6 +61,18 @@ CUSTOM_CSS = """
 .metric-value { font-size: 28px; font-weight: bold; }
 .metric-label { font-size: 13px; opacity: 0.9; margin-top: 4px; }
 footer { visibility: hidden; }
+
+/* ---- Dark mode: 修复 Dataframe 表头文字颜色 ---- */
+.dark table thead th,
+.dark .table-wrap thead th,
+.dark table th {
+    color: #e0e0e0 !important;
+    background-color: #2a2a2a !important;
+}
+.dark table tbody td,
+.dark .table-wrap tbody td {
+    color: #d0d0d0 !important;
+}
 """
 
 
@@ -102,20 +114,17 @@ def build_prediction_tab():
             )
             btn_run = gr.Button("🚀 执行预测", variant="primary", size="lg")
             
-            # 预测指标
-            gr.Markdown("---")
-            gr.Markdown("### 📈 预测指标")
-            with gr.Row():
-                solar_total = gr.Textbox(label="☀️ 光伏总出力 (kWh)", value="—")
-                load_total = gr.Textbox(label="⚡ 充电总需求 (kWh)", value="—")
-            with gr.Row():
-                green_ratio = gr.Textbox(label="🌿 绿电替代率", value="—")
-                model_status_md = gr.Markdown("")
-            
-            gr.Markdown("---")
-            gr.Markdown("### 📊 峰谷指标")
-            solar_peak_info = gr.Textbox(label="光伏峰值", value="—")
-            load_peak_info = gr.Textbox(label="负荷峰值", value="—")
+            # 预测指标（紧凑布局）
+            with gr.Accordion("📈 预测指标 & 峰谷信息", open=True):
+                with gr.Row():
+                    solar_total = gr.Textbox(label="☀️ 光伏总出力 (kWh)", value="—")
+                    load_total = gr.Textbox(label="⚡ 充电总需求 (kWh)", value="—")
+                with gr.Row():
+                    green_ratio = gr.Textbox(label="🌿 绿电替代率", value="—")
+                    solar_peak_info = gr.Textbox(label="🔆 光伏峰值", value="—")
+                with gr.Row():
+                    load_peak_info = gr.Textbox(label="📊 负荷峰值", value="—")
+                    model_status_md = gr.Markdown("")
 
         with gr.Column(scale=2):
             forecast_chart = gr.Plot(label="预测曲线")
@@ -213,9 +222,9 @@ def _run_prediction_ui(option_label):
     # 模型状态
     status = result["model_status"]
     if status["solar_ok"] and status["charging_ok"]:
-        status_md = "✅ 光伏 CNN-LSTM | ✅ 充电 TCN-Attention-LSTM"
+        status_md = "✅ 光伏 LSTM | ✅ 充电 TCN-Attention-LSTM"
     elif status["solar_ok"]:
-        status_md = "✅ 光伏 CNN-LSTM | ⚠️ 充电模拟"
+        status_md = "✅ 光伏 LSTM | ⚠️ 充电模拟"
     elif status["charging_ok"]:
         status_md = "⚠️ 光伏模拟 | ✅ 充电 TCN-Attention-LSTM"
     else:
@@ -342,7 +351,7 @@ def create_app():
         theme=APP_THEME,
         css=CUSTOM_CSS,
     ) as app:
-        # 标题
+        # 标题 + 主题切换按钮
         gr.HTML(
             f"""
             <div style="text-align:center; margin-bottom:20px;">
@@ -350,10 +359,31 @@ def create_app():
                     ☀️🔋⚡ {APP_TITLE}
                 </h1>
                 <p style="font-size:14px; opacity:0.7;">
-                    光伏预测 (CNN-LSTM) | 充电负荷预测 (TCN-Attention-LSTM) | 历史数据探索
+                    光伏预测 (LSTM + 对抗训练) | 充电负荷预测 (TCN-Attention-LSTM) | 历史数据探索
                 </p>
             </div>
             """
+        )
+        
+        # Dark/Light 主题切换按钮
+        with gr.Row(elem_classes="theme-row"):
+            theme_btn = gr.Button("🌙 深色 / ☀️ 浅色", variant="secondary", size="sm")
+            _theme_state = gr.State("light")
+        
+        theme_btn.click(
+            fn=lambda s: "dark" if s == "light" else "light",
+            inputs=[_theme_state],
+            outputs=[_theme_state],
+            js="""
+            function(s) {
+                if (s === 'dark') {
+                    document.body.classList.add('dark');
+                } else {
+                    document.body.classList.remove('dark');
+                }
+                return s;
+            }
+            """,
         )
 
         # Tab 页

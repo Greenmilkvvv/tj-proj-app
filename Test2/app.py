@@ -365,23 +365,16 @@ def create_app():
             """
         )
         
-        # Dark/Light 主题切换按钮
+        # Dark/Light 主题切换按钮（纯前端切换，无后端状态，避免同步 bug）
         with gr.Row(elem_classes="theme-row"):
             theme_btn = gr.Button("🌙 深色 / ☀️ 浅色", variant="secondary", size="sm")
-            _theme_state = gr.State("light")
         
         theme_btn.click(
-            fn=lambda s: "dark" if s == "light" else "light",
-            inputs=[_theme_state],
-            outputs=[_theme_state],
+            fn=None,
             js="""
-            function(s) {
-                if (s === 'dark') {
-                    document.body.classList.add('dark');
-                } else {
-                    document.body.classList.remove('dark');
-                }
-                return s;
+            function() {
+                document.body.classList.toggle('dark');
+                return [];
             }
             """,
         )

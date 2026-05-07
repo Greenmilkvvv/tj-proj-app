@@ -18,6 +18,9 @@ from weather_service import fetch_weather_data, build_radiation_chart, get_curre
 from data_service import (
     get_dataset_overview, get_available_dates, plot_daily_load_curves,
     get_correlation_chart, get_hourly_profile_chart,
+    get_training_loss_chart, run_backtest_charging,
+    build_error_distribution_chart, build_error_by_hour_chart,
+    get_solar_model_info,
 )
 from prediction_service import run_prediction, generate_strategy
 
@@ -342,6 +345,62 @@ def _generate_strategy_ui():
 
 
 # ============================================================
+# Tab 5: 误差分析
+# ============================================================
+def build_error_tab():
+    """构建误差分析 Tab 的 UI 组件"""
+    btn_run_eval = gr.Button("🔍 运行评估", variant="primary")
+    
+    # gr.Markdown("### 📉 充电模型训练曲线")
+    # training_loss_chart = gr.Plot(label="训练 Loss")
+    # training_loss_status = gr.Markdown("")
+    
+    gr.Markdown("### 📊 充电模型回测")
+    backtest_chart = gr.Plot(label="真实值 vs 预测值")
+    backtest_summary = gr.Markdown("")
+    
+    gr.Markdown("### 📈 残差分布分析")
+    with gr.Row():
+        error_dist_chart = gr.Plot(label="残差分布直方图")
+        error_hour_chart = gr.Plot(label="按小时误差")
+    
+    gr.Markdown("### ☀️ 光伏模型信息")
+    solar_model_info = gr.Markdown("")
+    
+    btn_run_eval.click(
+        fn=_run_evaluation,
+        inputs=[],
+        outputs=[
+            # training_loss_chart, training_loss_status
+            backtest_chart, backtest_summary,
+            error_dist_chart, error_hour_chart,
+            solar_model_info,
+        ],
+    )
+    return btn_run_eval
+
+
+def _run_evaluation():
+    """执行误差分析"""
+    # 训练曲线
+    loss_fig, loss_msg = get_training_loss_chart()
+    
+    # 回测
+    backtest_fig, backtest_msg = run_backtest_charging()
+    
+    # 残差分布
+    error_dist_fig = build_error_distribution_chart()
+    
+    # 按小时误差
+    error_hour_fig = build_error_by_hour_chart()
+    
+    # 光伏模型信息
+    solar_info = get_solar_model_info()
+    
+    return loss_fig, loss_msg, backtest_fig, backtest_msg, error_dist_fig, error_hour_fig, solar_info
+
+
+# ============================================================
 # 主应用
 # ============================================================
 def create_app():
@@ -392,6 +451,9 @@ def create_app():
 
             with gr.TabItem("💡 策略建议", id="tab_strategy"):
                 build_strategy_tab()
+
+            with gr.TabItem("🔬 误差分析", id="tab_error"):
+                build_error_tab()
 
     return app
 

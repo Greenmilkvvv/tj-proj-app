@@ -1,6 +1,6 @@
-# 光储充预测 Demo — 需求文档 v5.0
+# 光储充预测 Demo — 需求文档 v5.1
 
-> **修订说明（v5.0）**：修正模型架构描述（光伏为 LSTM 非 CNN-LSTM）、更新输入维度（光伏 7 维 / 充电 6 维）、对齐 aligned CSV 实际列名、精简策略建议为实际实现的功能范围。文档结构与 `Test2/` 实现严格对齐。
+> **修订说明（v5.1）**：新增「误差分析」Tab，补充充电模型回测与残差分析功能描述；更新整体架构图；与 `Test2/` 实现保持严格对齐。
 
 ---
 
@@ -13,6 +13,7 @@
 - ⚡ 基于 TCN-Attention-LSTM Hybrid 模型的充电负荷预测（含置信区间估计）
 - 📊 历史训练数据探索与多维度可视化分析
 - 💡 基于预测结果的供需平衡分析与策略建议（规则引擎）
+- 🔬 充电模型误差分析与回测评估
 
 **目标用户**：项目演示评审、学术交流、能源管理概念验证。
 
@@ -26,11 +27,12 @@
 | 光伏模型定义 | `Solar_Forecast/NN.py` | LSTMPredictor + GeneratorWithFeatures 结构 |
 | 充电模型权重 | `Charging_Forecast/best_pth/final_best_hybrid_model.pth` | TCN-Attention-LSTM 负荷预测 |
 | 充电模型训练代码 | `Charging_Forecast/Bys-TCN-Attention-LSTM_model.ipynb` | HybridModel 结构定义 |
+| 充电模型训练历史 | `Charging_Forecast/final_train_history.pkl` | 训练 Loss 曲线回放 |
 | 气象 API 模块 | `Weather/get_weather.py` | Open-Meteo 实时气象 + 15min 预报 |
 | 全特征训练集 | `Data/dataset_all_features_train.csv` | 数据探索 |
-| 全特征测试集 | `Data/dataset_all_features_test.csv` | 数据探索 |
+| 全特征测试集 | `Data/dataset_all_features_test.csv` | 数据探索 + 回测验证 |
 | 精选特征训练集 | `Data/dataset_selected_features_train.csv` | 充电模型训练参考 |
-| 精选特征测试集 | `Data/dataset_selected_features_test.csv` | 充电模型验证 |
+| 精选特征测试集 | `Data/dataset_selected_features_test.csv` | 充电模型验证 + 残差分析 |
 | 光伏训练对齐数据 | `Data/aligned_2026_01_02.csv` | 光伏模型训练及预测输入构建 |
 
 ---
@@ -38,25 +40,26 @@
 ## 三、技术架构
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                       Gradio Web UI                               │
-├────────────────┬──────────────────┬────────────────┬─────────────┤
-│  Tab1: 预测核心 │  Tab2: 气象监测   │  Tab3: 数据探索  │ Tab4: 策略建议│
-│  光伏+负荷预测  │  实时+预报+预警   │  历史分析+画像   │  供需平衡分析  │
-├────────────────┴──────────────────┴────────────────┴─────────────┤
-│                         服务层 (Python)                            │
-├──────────────┬──────────────┬──────────────┬────────────────────┤
-│ 气象服务      │ 预测服务      │ 数据服务      │                    │
-│ (Open-Meteo) │ (LSTM +      │ (pandas +     │                    │
-│              │  TCN-Attn +  │  plotly)      │                    │
-│              │  LSTM)       │               │                    │
-├──────────────┴──────────────┴──────────────┴────────────────────┤
-│                         资源层                                     │
-├──────────────┬──────────────┬──────────────┬────────────────────┤
-│ Open-Meteo   │ Solar_Forecast│ Charging_    │ Data/               │
-│ API (免费)   │ /best_pth/   │ Forecast/    │ (CSV 数据集)        │
-│              │              │ best_pth/    │                    │
-└──────────────┴──────────────┴──────────────┴────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Gradio Web UI                                 │
+├──────────────┬──────────────┬──────────────┬──────────────┬──────────┤
+│ Tab1: 预测核心│ Tab2: 气象监测│ Tab3: 数据探索│ Tab4: 策略建议│Tab5: 误差│
+│ 光伏+负荷预测 │ 实时+预报+预警│ 历史分析+画像 │ 供需平衡分析  │ 回测+残差│
+├──────────────┴──────────────┴──────────────┴──────────────┴──────────┤
+│                          服务层 (Python)                               │
+├────────────────┬────────────────┬───────────────┬────────────────────┤
+│　weather_service│ prediction_   │ data_service  │                    │
+│   (Open-Meteo) │ service        │ (pandas +     │                    │
+│                │ (LSTM +        │  plotly)      │                    │
+│                │  TCN-Attn +    │               │                    │
+│                │  LSTM)         │               │                    │
+├────────────────┴────────────────┴───────────────┴────────────────────┤
+│                           资源层                                       │
+├────────────────┬────────────────┬───────────────┬────────────────────┤
+│ Open-Meteo     │ Solar_Forecast │ Charging_     │ Data/              │
+│ API (免费)     │ /best_pth/     │ Forecast/     │ (CSV 数据集)        │
+│                │                │ best_pth/     │                    │
+└────────────────┴────────────────┴───────────────┴────────────────────┘
 ```
 
 ---
@@ -131,7 +134,7 @@
 #### 4.2.2 辐照度趋势图
 
 - 展示当日辐照度变化趋势（Plotly 图表）
-- 与云量数据关联展示
+- 与云量数据关联展示（双轴图）
 
 #### 4.2.3 未来 3 小时预报表
 
@@ -204,6 +207,31 @@
 
 ---
 
+### Tab 5 — 误差分析
+
+提供充电模型的离线评估与误差分析，帮助理解模型性能。
+
+#### 4.5.1 充电模型回测
+
+- 对测试集执行 24 步滚动预测
+- 双轴图对比真实值 vs 预测值，含 MAPE / MAE / RMSE 指标
+- 回测结果汇总为 Markdown 文本
+
+#### 4.5.2 残差分布分析
+
+- **残差分布直方图**：展示预测残差（真实值 − 预测值）的频率分布，叠加正态分布参考线
+- **按小时误差箱线图**：展示不同小时段（0-23h）的误差分布，帮助识别模型的薄弱时段
+
+#### 4.5.3 光伏模型信息
+
+- 展示光伏模型的结构概述：
+  - 模型架构 (LSTMPredictor + GeneratorWithFeatures)
+  - 权重文件路径
+  - 输入/输出维度
+  - 参数量统计
+
+---
+
 ## 五、预测流水线数据流
 
 ```
@@ -264,7 +292,7 @@
 | `Data/dataset_all_features_train.csv` | 数据探索（全特征训练集） | timestamp, hour, load_kw, price, lag_1, lag_96 等 |
 | `Data/dataset_all_features_test.csv` | 数据探索（全特征测试集） | 同上 |
 | `Data/dataset_selected_features_train.csv` | 充电模型训练参考 | timestamp, lag_1, lag_96, lag_672, rolling_mean_4, rolling_std_4, price, load_kw |
-| `Data/dataset_selected_features_test.csv` | 充电模型验证 | 同上 |
+| `Data/dataset_selected_features_test.csv` | 充电模型验证 + 回测 + 残差分析 | 同上 |
 | `Data/aligned_2026_01_02.csv` | 光伏模型训练及预测输入 | datetime, power, shortwave_radiation, direct_radiation, diffuse_radiation, temperature_2m 等 35 列 |
 
 ### aligned CSV 实际列名（部分）
@@ -302,7 +330,6 @@
 | 用户登录/权限管理 | Demo 场景无需认证 |
 | 数据库持久化 | 全量数据来自静态 CSV + 实时 API，无需数据库 |
 | 历史预测结果回溯 | Demo 不存储历史预测记录 |
-| 系统状态检查 Tab | 过度设计；模型加载状态已在预测 Tab 中展示，依赖/数据检查可在启动日志中体现 |
 | 分时电价动态优化调度 | Demo 阶段仅做供需平衡分析，电价引导策略已预留配置，可在后续版本扩展 |
 
 ---
@@ -390,3 +417,4 @@ PREDICTION_OPTIONS = {
 |------|------|----------|
 | v4.0 | — | 基于 Test 文件夹实现重构，剔除不可实现功能 |
 | v5.0 | 2026-05 | 修正模型架构描述（光伏 LSTM 非 CNN-LSTM）、更新输入维度（7/6）、对齐 aligned CSV 列名、精简策略建议 |
+| v5.1 | 2026-05 | 新增误差分析 Tab（回测 + 残差分布 + 光伏模型信息）、更新架构图为 5 Tab、补充精选特征测试集的回测用途 |

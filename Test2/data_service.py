@@ -1,16 +1,19 @@
 """
 数据探索服务模块
-提供历史数据加载、统计、相关性分析、日负荷曲线等功能
+提供历史数据加载、统计、相关性分析、日负荷曲线、误差分析等功能
 """
+import os
+import pickle
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from datetime import datetime
 import warnings
 warnings.filterwarnings("ignore")
 
-from config import DATA_ALL_TRAIN, DATA_ALL_TEST
+from config import DATA_ALL_TRAIN, DATA_ALL_TEST, DATA_ALIGNED, DATA_SELECTED_TEST, ROOT_DIR
 
 
 # ============================================================
@@ -23,7 +26,6 @@ def _load_csv(path):
     if path not in _cache:
         try:
             df = pd.read_csv(path, parse_dates=["timestamp"] if "timestamp" in open(path).readline() else None)
-            # 兼容 aligned CSV 的 datetime 列
             if "datetime" in df.columns:
                 df["datetime"] = pd.to_datetime(df["datetime"])
             _cache[path] = df
@@ -105,7 +107,7 @@ def get_available_dates():
     if time_col not in df.columns:
         return []
     dates = sorted(df[time_col].dt.date.unique())
-    return [str(d) for d in dates[:30]]  # 限制30个日期
+    return [str(d) for d in dates[:30]]
 
 
 def plot_daily_load_curves(date_strs):
@@ -133,7 +135,6 @@ def plot_daily_load_curves(date_strs):
             day_df = df[df[time_col].dt.date == d].sort_values(time_col)
             if len(day_df) == 0:
                 continue
-            # 生成时间轴 (15min粒度)
             times = [f"{t.hour:02d}:{t.minute:02d}" for t in day_df[time_col]]
             color = colors[i % len(colors)]
             fig.add_trace(go.Scatter(
@@ -167,7 +168,6 @@ def get_correlation_chart():
     if df is None or "load_kw" not in df.columns:
         return go.Figure()
 
-    # 排除非数值列
     exclude = ["timestamp", "datetime", "load_kw"]
     numeric_cols = [c for c in df.columns if c not in exclude and df[c].dtype in ["float64", "int64"]]
     if not numeric_cols:
@@ -183,7 +183,6 @@ def get_correlation_chart():
     if not corrs:
         return go.Figure()
 
-    # 按绝对值降序排列
     sorted_items = sorted(corrs.items(), key=lambda x: abs(x[1]), reverse=True)
     labels = [k for k, v in sorted_items]
     values = [v for k, v in sorted_items]
@@ -229,7 +228,6 @@ def get_hourly_profile_chart():
     stats["lower"] = (stats["mean"] - stats["std"]).clip(0)
 
     fig = go.Figure()
-    # 误差带
     fig.add_trace(go.Scatter(
         x=list(stats["hour"]) + list(stats["hour"])[::-1],
         y=list(stats["upper"]) + list(stats["lower"])[::-1],
@@ -239,7 +237,6 @@ def get_hourly_profile_chart():
         name="±1σ",
         showlegend=True,
     ))
-    # 均值线
     fig.add_trace(go.Scatter(
         x=stats["hour"], y=stats["mean"],
         mode="lines+markers",
@@ -256,3 +253,378 @@ def get_hourly_profile_chart():
         height=400,
     )
     return fig
+
+
+# ============================================================
+# 误差分析 — 训练曲线
+# ============================================================
+TRAIN_HISTORY_PKL = os.path.join(ROOT_DIR, "Charging_Forecast", "final_train_history.pkl")
+
+
+def get_training_loss_chart():
+    """充电模型训练/验证损失曲线"""
+    if not os.path.exists(TRAIN_HISTORY_PKL):
+        fig = go.Figure()
+        fig.add_annotation(text="训练历史文件不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 训练历史文件不存在"
+
+    try:
+        with open(TRAIN_HISTORY_PKL, "rb") as f:
+            history = pickle.load(f)
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"加载失败: {e}", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, f"⚠️ 加载失败: {e}"
+
+    train_losses = history.get("train_losses", [])
+    val_logs = history.get("val_logs", [])
+
+    fig = go.Figure()
+    epochs = list(range(1, len(train_losses) + 1))
+
+    if train_losses:
+        fig.add_trace(go.Scatter(
+            x=epochs, y=train_losses,
+            mode="lines",
+            name="训练 Loss",
+            line=dict(color="#2196f3", width=1.5),
+        ))
+    if val_logs:
+        if len(val_logs) == 1 and len(train_losses) > 1:
+            fig.add_hline(
+                y=val_logs[0], line_dash="dash", line_color="#f44336",
+                annotation_text=f"验证 Loss = {val_logs[0]:.4f}",
+            )
+        else:
+            fig.add_trace(go.Scatter(
+                x=epochs, y=val_logs,
+                mode="lines",
+                name="验证 Loss",
+                line=dict(color="#f44336", width=1.5, dash="dot"),
+            ))
+
+    fig.update_layout(
+        title="充电模型 (TCN-Attention-LSTM) 训练过程",
+        xaxis=dict(title="Epoch"),
+        yaxis=dict(title="Loss (MSE)"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=350,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    final_loss = train_losses[-1] if train_losses else float("nan")
+    return fig, f"✅ 最终训练 Loss: {final_loss:.4f}"
+
+
+# ============================================================
+# 误差分析 — 充电模型回测
+# ============================================================
+def _rolling_window_backtest(df, feature_cols, target_col, lookback=96):
+    """滑动窗口回测：使用 sklearn MLP 代理模型评估预测性能"""
+    from sklearn.neural_network import MLPRegressor
+    from sklearn.preprocessing import StandardScaler
+
+    data = df[feature_cols + [target_col]].dropna().values.astype(np.float64)
+    n = len(data)
+    if n < lookback + 10:
+        return None, None, None, None
+
+    X_all, y_all = [], []
+    for i in range(n - lookback):
+        X_all.append(data[i:i + lookback, :-1].flatten())
+        y_all.append(data[i + lookback, -1])
+    X_all = np.array(X_all)
+    y_all = np.array(y_all)
+
+    split = int(len(X_all) * 0.6)
+    if split < 2:
+        return None, None, None, None
+
+    X_train, y_train = X_all[:split], y_all[:split]
+    X_test, y_test = X_all[split:], y_all[split:]
+
+    scaler_x = StandardScaler()
+    scaler_y = StandardScaler()
+    X_train_s = scaler_x.fit_transform(X_train)
+    y_train_s = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+
+    model = MLPRegressor(
+        hidden_layer_sizes=(64, 32),
+        max_iter=300,
+        random_state=42,
+        early_stopping=True,
+        validation_fraction=0.1,
+    )
+    model.fit(X_train_s, y_train_s)
+
+    X_test_s = scaler_x.transform(X_test)
+    y_pred_s = model.predict(X_test_s)
+    y_pred = scaler_y.inverse_transform(y_pred_s.reshape(-1, 1)).ravel()
+    y_true = y_test
+
+    return y_true, y_pred, X_test.shape[0], model
+
+
+def run_backtest_charging():
+    """对充电负荷测试集进行回测，返回指标和图表"""
+    df = _load_csv(DATA_SELECTED_TEST)
+    if df is None or len(df) < 100:
+        fig = go.Figure()
+        fig.add_annotation(text="测试数据不足", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 数据不足"
+
+    feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
+    target_col = "load_kw"
+
+    for c in feature_cols + [target_col]:
+        if c not in df.columns:
+            fig = go.Figure()
+            fig.add_annotation(text=f"缺失列: {c}", showarrow=False, font=dict(size=14))
+            fig.update_layout(height=350, template="plotly_white")
+            return fig, f"⚠️ 数据列缺失: {c}"
+
+    y_true, y_pred, test_size, model = _rolling_window_backtest(df, feature_cols, target_col)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="回测样本不足", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 样本不足"
+
+    residuals = y_true - y_pred
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    mae = np.mean(np.abs(residuals))
+    nonzero = np.abs(y_true) > 10
+    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+
+    # 下采样展示
+    n_show = min(200, len(y_true))
+    idx = np.linspace(0, len(y_true) - 1, n_show).astype(int)
+    t_show = y_true[idx]
+    p_show = y_pred[idx]
+    r_show = residuals[idx]
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.55, 0.45],
+        subplot_titles=("真实值 vs 预测值 (回测)", "残差分布 (真实 - 预测)"),
+        vertical_spacing=0.12,
+    )
+
+    fig.add_trace(go.Scatter(
+        x=list(range(len(t_show))), y=t_show,
+        mode="lines", name="真实值",
+        line=dict(color="#2196f3", width=2),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=list(range(len(p_show))), y=p_show,
+        mode="lines", name="预测值",
+        line=dict(color="#ff9800", width=1.5, dash="dot"),
+    ), row=1, col=1)
+
+    colors_res = ["#4caf50" if v >= 0 else "#f44336" for v in r_show]
+    fig.add_trace(go.Bar(
+        x=list(range(len(r_show))), y=r_show,
+        marker_color=colors_res, name="残差", opacity=0.6,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="#666", row=2, col=1)
+
+    fig.update_xaxes(title_text="样本序号", row=2, col=1)
+    fig.update_yaxes(title_text="负荷 (kW)", row=1, col=1)
+    fig.update_yaxes(title_text="残差 (kW)", row=2, col=1)
+    fig.update_layout(
+        height=550,
+        template="plotly_white",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+
+    summary = (
+        f"### 📊 回测指标 (n={len(y_true)})\n\n"
+        f"| 指标 | 值 |\n"
+        f"|------|----|\n"
+        f"| RMSE | **{rmse:.2f}** kW |\n"
+        f"| MAE  | **{mae:.2f}** kW |\n"
+        f"| MAPE | **{mape:.1f}%** |\n"
+        f"| 测试集大小 | {test_size} 个样本 |\n"
+    )
+
+    return fig, summary
+
+
+def build_error_distribution_chart():
+    """残差分布直方图（带正态拟合）"""
+    df = _load_csv(DATA_SELECTED_TEST)
+    if df is None:
+        fig = go.Figure()
+        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
+    target_col = "load_kw"
+    y_true, y_pred, _, _ = _rolling_window_backtest(df, feature_cols, target_col)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    residuals = y_true - y_pred
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=residuals,
+        nbinsx=50,
+        marker_color="#2196f3",
+        opacity=0.75,
+        name="残差",
+    ))
+    fig.add_vline(
+        x=0, line_dash="dash", line_color="#f44336", line_width=2,
+        annotation_text="0",
+    )
+
+    # 正态拟合参考线
+    mu, sigma = np.mean(residuals), np.std(residuals)
+    x_span = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
+    y_pdf = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_span - mu) / sigma) ** 2)
+    bin_width = (residuals.max() - residuals.min()) / 50
+    y_scaled = y_pdf * len(residuals) * bin_width
+    fig.add_trace(go.Scatter(
+        x=x_span, y=y_scaled,
+        mode="lines",
+        name=f"正态拟合 (μ={mu:.1f}, σ={sigma:.1f})",
+        line=dict(color="#f44336", width=2, dash="dot"),
+    ))
+
+    fig.update_layout(
+        title="残差分布直方图",
+        xaxis=dict(title="残差 (kW)"),
+        yaxis=dict(title="频次"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        bargap=0.05,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def build_error_by_hour_chart():
+    """按小时分组的误差分析 (MAE & RMSE)"""
+    df = _load_csv(DATA_SELECTED_TEST)
+    if df is None:
+        fig = go.Figure()
+        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
+    target_col = "load_kw"
+    y_true, y_pred, _, _ = _rolling_window_backtest(df, feature_cols, target_col)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    # 提取测试集小时
+    ts_col = "timestamp" if "timestamp" in df.columns else None
+    if ts_col is None:
+        hours = np.arange(len(y_true)) % 24
+    else:
+        df[ts_col] = pd.to_datetime(df[ts_col])
+        lookback = 96
+        n_test = len(y_true)
+        ts_all = df[ts_col].values
+        if len(ts_all) < lookback + n_test:
+            ts_test = ts_all[-n_test:]
+        else:
+            ts_test = ts_all[lookback: lookback + n_test]
+        hours = np.array([getattr(pd.Timestamp(t).to_pydatetime(), 'hour', 0) for t in ts_test[:n_test]])
+
+    error_df = pd.DataFrame({
+        "hour": hours,
+        "abs_error": np.abs(y_true - y_pred),
+        "sq_error": (y_true - y_pred) ** 2,
+    })
+    hourly = error_df.groupby("hour").agg(
+        MAE=("abs_error", "mean"),
+        RMSE=("sq_error", lambda x: np.sqrt(x.mean())),
+        count=("sq_error", "count"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hourly["hour"], y=hourly["MAE"],
+        name="MAE (kW)",
+        marker_color="#2196f3",
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=hourly["hour"], y=hourly["RMSE"],
+        mode="lines+markers",
+        name="RMSE (kW)",
+        line=dict(color="#f44336", width=2),
+        marker=dict(size=6),
+    ))
+
+    fig.update_layout(
+        title="按小时误差分析 (MAE & RMSE)",
+        xaxis=dict(title="小时", dtick=2),
+        yaxis=dict(title="误差 (kW)"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+# ============================================================
+# 误差分析 — 光伏模型性能参考
+# ============================================================
+def get_solar_model_info():
+    """光伏模型 (LSTM + GAN) 的基本信息"""
+    from config import SOLAR_MODEL_PTH
+
+    lines = [
+        "### ☀️ 光伏预测模型 (LSTM + GAN)",
+        "",
+        "#### 模型架构",
+        "| 组件 | 参数 |",
+        "|------|------|",
+        "| 类型 | LSTM + GAN 对抗训练 |",
+        "| 隐藏层 | 2层 LSTM, hidden=128 |",
+        "| Dropout | 0.2 |",
+        "| 输入窗口 | 24 步 (6 小时) |",
+        "| 输出 | 1 步 (15分钟) |",
+        "",
+    ]
+
+    if os.path.exists(SOLAR_MODEL_PTH):
+        try:
+            import torch
+            state = torch.load(SOLAR_MODEL_PTH, map_location="cpu", weights_only=True)
+            param_count = sum(v.numel() for v in state.values())
+            lines.append(f"| 参数量 | {param_count:,} |")
+            lines.append(f"| 权重文件 | `Solar_Forecast/best_pth/best_generator.pth` |")
+        except Exception:
+            lines.append("| 权重文件 | `Solar_Forecast/best_pth/best_generator.pth` |")
+
+    lines += [
+        "",
+        "#### 说明",
+        "光伏预测采用 LSTM 加 GAN 对抗训练框架：",
+        "1. **Generator**: LSTM 生成预测功率",
+        "2. **Discriminator**: 判别器鉴别生成 vs 真实功率",
+        "3. **对抗训练**: 提升预测分布的真实性",
+        "",
+        "> ⚠️ 光伏模型训练历史文件未单独保存，无法展示训练 Loss 曲线。",
+    ]
+
+    return "\n".join(lines)

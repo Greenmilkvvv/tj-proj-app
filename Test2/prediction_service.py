@@ -1,9 +1,16 @@
 """
 预测服务：加载模型、执行预测、生成策略建议
+=============================
+充电与光伏预测共用此服务。
+核心修复：
+  - 充电模型：使用 MinMaxScaler (scaler_X / scaler_y)，从充电数据源读取特征
+  - 光伏模型：使用 MinMaxScaler (simple_scaler_1)，7 维特征
+  - 迭代预测中正确处理 lag 特征的滚动更新
 """
 import os
 import sys
 import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings("ignore")
@@ -36,7 +43,7 @@ if TORCH_AVAILABLE:
             super().__init__()
             self.padding = (kernel_size - 1) * dilation
             self.conv = nn.Conv1d(in_channels, out_channels, kernel_size,
-                                  padding=self.padding, dilation=dilation)
+                                   padding=self.padding, dilation=dilation)
             self.dropout = nn.Dropout(dropout)
             self.relu = nn.ReLU()
             self.residual = nn.Conv1d(in_channels, out_channels, 1) \
@@ -73,7 +80,7 @@ if TORCH_AVAILABLE:
             self.tcn = nn.Sequential(*tcn_layers)
             self.attention = SimpleAttention(64)
             self.lstm = nn.LSTM(64, hidden_dim, batch_first=True,
-                                num_layers=1, dropout=0.1)
+                                 num_layers=1, dropout=0.1)
             self.fc = nn.Linear(hidden_dim + input_dim, output_dim)
 
         def forward(self, x):
@@ -122,6 +129,37 @@ if TORCH_AVAILABLE:
 
 
 # ============================================================
+# Scaler 加载
+# ============================================================
+def _load_charging_scalers():
+    """加载充电模型 scaler (MinMaxScaler)"""
+    import pickle
+    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_X.pkl")
+    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_y.pkl")
+    if not os.path.exists(scaler_X_path) or not os.path.exists(scaler_y_path):
+        print("[WARN] 充电 scaler 文件不存在, 将使用模拟预测")
+        return None, None
+    with open(scaler_X_path, 'rb') as f:
+        scaler_X = pickle.load(f)
+    with open(scaler_y_path, 'rb') as f:
+        scaler_y = pickle.load(f)
+    print("[OK] 充电 scaler 加载成功")
+    return scaler_X, scaler_y
+
+
+def _load_solar_scaler():
+    """加载光伏模型 scaler (MinMaxScaler)"""
+    import joblib
+    scaler_path = os.path.join(ROOT_DIR, "Solar_Forecast", "simple_scaler_1.pkl")
+    if not os.path.exists(scaler_path):
+        print("[WARN] 光伏 scaler 文件不存在, 将使用模拟预测")
+        return None
+    scaler = joblib.load(scaler_path)
+    print("[OK] 光伏 scaler 加载成功")
+    return scaler
+
+
+# ============================================================
 # 模型缓存与参数
 # ============================================================
 _solar_model = None
@@ -133,6 +171,16 @@ _CHARGING_INPUT_DIM = 6
 _CHARGING_HIDDEN_SIZE = 121
 _SOLAR_HIDDEN_SIZE = 128
 _SOLAR_NUM_LAYERS = 2
+
+# 充电特征列(训练时使用)
+CHARGING_FEATURE_COLS = ['price', 'lag_1', 'lag_96', 'lag_672', 'rolling_std_4', 'rolling_mean_4']
+
+# 光伏特征列(训练时使用)
+SOLAR_FEATURE_COLS_7 = [
+    'power', 'hour_sin', 'hour_cos',
+    'shortwave_radiation (W/m2)', 'direct_radiation (W/m2)',
+    'diffuse_radiation (W/m2)', 'direct_normal_irradiance (W/m2)'
+]
 
 if TORCH_AVAILABLE:
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -209,51 +257,61 @@ def load_charging_model():
 
 
 # ============================================================
-# 辅助：从 aligned CSV 构建特征窗口
+# 历史窗口构建
 # ============================================================
-def _build_solar_window(df, seq_len):
-    """从 aligned CSV 数值列构建光伏模型输入窗口 (动态列匹配)"""
-    num_cols = [c for c in df.columns if c != 'datetime' and np.issubdtype(df[c].dtype, np.number)]
-    # 优先以 power 开头
-    if 'power' in num_cols:
-        idx = num_cols.index('power')
-        num_cols = num_cols[idx:] + num_cols[:idx]
-    raw = df[num_cols].tail(seq_len).values.astype(np.float32)
-    n = raw.shape[0]
-    dim = SOLAR_FEATURE_DIM
-    out = np.zeros((n, dim), dtype=np.float32)
-    out[:, 0] = raw[:, 0]  # power
-    # 时间编码
-    now = datetime.now()
-    hours = np.arange(-n, 0) * 0.25 + now.hour + now.minute / 60
-    out[:, 1] = np.sin(2 * np.pi * hours / 24)
-    out[:, 2] = np.cos(2 * np.pi * hours / 24)
-    # 其余列填充
-    if raw.shape[1] > 1:
-        copy_n = min(raw.shape[1] - 1, dim - 3)
-        out[:, 3:3 + copy_n] = raw[:, 1:1 + copy_n]
-    return out
+def _load_aligned_df():
+    """加载 aligned CSV 并做特征工程 (与训练 notebook 一致)"""
+    aligned_path = os.path.join(ROOT_DIR, "Data", "aligned_2026_01_02.csv")
+    if not os.path.exists(aligned_path):
+        return None
+    df = pd.read_csv(aligned_path, parse_dates=['datetime'])
+    df.sort_values('datetime', inplace=True)
+    df['hour'] = df['datetime'].dt.hour
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+    # theta: 天顶角 (添加 clip 防除零)
+    diffuse = df['diffuse_radiation (W/m2)'].values
+    dni = df['direct_normal_irradiance (W/m2)'].values
+    dni_safe = np.where(np.abs(dni) < 1e-6, 1.0, dni)
+    cos_theta = (df['shortwave_radiation (W/m2)'].values - diffuse) / dni_safe
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    df['theta'] = np.arccos(cos_theta)
+    return df
 
 
-def _build_charging_window(df, seq_len):
-    """从 aligned CSV 数值列构建充电模型输入窗口"""
-    num_cols = [c for c in df.columns if c != 'datetime' and np.issubdtype(df[c].dtype, np.number)]
-    if 'power' in num_cols:
-        idx = num_cols.index('power')
-        num_cols = num_cols[idx:] + num_cols[:idx]
-    raw = df[num_cols].tail(seq_len).values.astype(np.float32)
-    n = raw.shape[0]
-    dim = CHARGING_FEATURE_DIM
-    out = np.zeros((n, dim), dtype=np.float32)
-    out[:, 0] = raw[:, 0]
-    now = datetime.now()
-    hours = np.arange(-n, 0) * 0.25 + now.hour + now.minute / 60
-    out[:, 1] = np.sin(2 * np.pi * hours / 24)
-    out[:, 2] = np.cos(2 * np.pi * hours / 24)
-    if raw.shape[1] > 1:
-        copy_n = min(raw.shape[1] - 1, dim - 3)
-        out[:, 3:3 + copy_n] = raw[:, 1:1 + copy_n]
-    return out
+def _build_solar_window(df, seq_len, scaler):
+    """从 aligned CSV 构建光伏模型输入窗口 (7 特征, MinMaxScaled)"""
+    if df is None or len(df) < seq_len:
+        return None
+    # 选取特征列
+    available = [c for c in SOLAR_FEATURE_COLS_7 if c in df.columns]
+    if 'theta' not in available:
+        # 确保 theta 列存在 (如果 _load_aligned_df 已处理)
+        pass
+    raw = df[SOLAR_FEATURE_COLS_7].tail(seq_len).values.astype(np.float32)
+    if scaler is not None:
+        raw = scaler.transform(raw)
+    return raw
+
+
+def _load_charging_df():
+    """加载充电测试数据 (供历史窗口使用)"""
+    test_path = os.path.join(ROOT_DIR, "Data", "dataset_selected_features_test.csv")
+    if not os.path.exists(test_path):
+        return None
+    df = pd.read_csv(test_path, parse_dates=['timestamp'])
+    df.sort_values('timestamp', inplace=True)
+    return df
+
+
+def _build_charging_window(df, seq_len, scaler_X):
+    """从充电数据构建充电模型输入窗口 (6 特征, MinMaxScaled)"""
+    if df is None or len(df) < seq_len:
+        return None
+    raw = df[CHARGING_FEATURE_COLS].tail(seq_len).values.astype(np.float32)
+    if scaler_X is not None:
+        raw = scaler_X.transform(raw)
+    return raw
 
 
 # ============================================================
@@ -296,26 +354,31 @@ def _mock_prediction(n_steps, weather):
 # 真实预测
 # ============================================================
 def _real_prediction(n_steps, weather):
-    now = datetime.now().replace(minute=0, second=0, microsecond=0)
+    now = datetime.now()
     times = [now + timedelta(minutes=15 * i) for i in range(n_steps)]
+
     solar_model = load_solar_model()
     charging_model = load_charging_model()
     solar_ok = solar_model is not None
     charging_ok = charging_model is not None
+
     if solar_ok:
         solar = _predict_solar(solar_model, n_steps, weather)
     else:
         solar = _fallback_solar(n_steps, weather)
+
     if charging_ok:
         load_mean, load_lower, load_upper = _predict_charging(charging_model, n_steps)
     else:
         res = _fallback_charging(n_steps)
         load_mean, load_lower, load_upper = res["mean"], res["lower"], res["upper"]
+
     total_solar = np.sum(solar) * 0.25
     total_load = np.sum(load_mean) * 0.25
     green_ratio = total_solar / total_load * 100 if total_load > 0 else 100
     solar_peak_idx = np.argmax(solar)
     load_peak_idx = np.argmax(load_mean)
+
     return {
         "times": times, "solar": solar,
         "load_mean": load_mean, "load_lower": load_lower, "load_upper": load_upper,
@@ -329,61 +392,194 @@ def _real_prediction(n_steps, weather):
 
 
 def _predict_solar(model, n_steps, weather):
-    import pandas as pd
-    seq_len = SOLAR_LOOKBACK
-    aligned_path = DATA_ALIGNED
-    if os.path.exists(aligned_path):
-        df = pd.read_csv(aligned_path)
-        window = _build_solar_window(df, seq_len)
+    """光伏迭代预测 (使用 scaler + 7 特征 + aligned CSV 历史数据)"""
+    scaler = _load_solar_scaler()
+    df = _load_aligned_df()
+
+    seq_len = SOLAR_LOOKBACK  # 24
+
+    if df is not None and scaler is not None:
+        window = _build_solar_window(df, seq_len, scaler)
     else:
-        window = np.random.randn(seq_len, SOLAR_FEATURE_DIM).astype(np.float32) * 0.1
+        window = np.random.randn(seq_len, 7).astype(np.float32) * 0.1
+
+    if window is None:
+        window = np.random.randn(seq_len, 7).astype(np.float32) * 0.1
+
+    # 确保窗口大小正确
+    if len(window) < seq_len:
+        pad = seq_len - len(window)
+        window = np.vstack([np.zeros((pad, 7), dtype=np.float32), window])
+
+    window = window[-seq_len:]
+
+    # 获取当前时间用于生成 hour_sin/hour_cos
+    now = datetime.now()
+    current_hour_fractional = now.hour + now.minute / 60.0
+
     outputs = []
-    hour_now = datetime.now().hour
     for i in range(n_steps):
-        if len(window) < seq_len:
-            window = np.pad(window, ((seq_len - len(window), 0), (0, 0)), mode="edge")
         inp = torch.FloatTensor(window[-seq_len:]).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            pred = model(inp).item()
-        outputs.append(max(pred, 0))
-        next_feat = window[-1].copy()
-        hour = (hour_now + (i + 1) * 0.25) % 24
-        next_feat[1] = np.sin(2 * np.pi * hour / 24)
-        next_feat[2] = np.cos(2 * np.pi * hour / 24)
-        next_feat[0] = pred
-        if weather and weather.get("radiation") is not None and len(next_feat) > 3:
-            rad_factor = max(0, np.sin(np.pi * (hour - 6) / 12)) if 6 <= hour <= 18 else 0
-            next_feat[3] = weather["radiation"] * rad_factor
+            pred_scaled = model(inp).item()
+
+        # 逆归一化得到真实功率
+        # 构造 dummy 行用于 inverse_transform
+        pred_row = window[-1].copy()
+        pred_row[0] = pred_scaled  # power 在索引 0
+        pred_real = scaler.inverse_transform(pred_row.reshape(1, -1))[0, 0]
+        pred_real = max(pred_real, 0.0)
+
+        outputs.append(pred_real)
+
+        # 构建下一步的特征
+        hour_fractional = (current_hour_fractional + (i + 1) * 0.25) % 24
+        next_feat = np.zeros(7, dtype=np.float32)
+
+        # 重新缩放 pred_real 用于下一步输入
+        # 使用 inverse_transform 的反向操作: (x - min) / (max - min)
+        power_scaled = (pred_real - scaler.data_min_[0]) / (scaler.data_max_[0] - scaler.data_min_[0] + 1e-8)
+        next_feat[0] = power_scaled
+        next_feat[1] = np.sin(2 * np.pi * hour_fractional / 24)
+        next_feat[2] = np.cos(2 * np.pi * hour_fractional / 24)
+
+        # 辐射特征: 如果有天气数据则使用, 否则沿用历史模式
+        if weather and weather.get("radiation") is not None:
+            rad = weather["radiation"]
+            # 简单日间模型: 辐射 = base_radiation * sin(π * (h-6)/12)
+            if 6 <= hour_fractional <= 18:
+                rad_factor = np.sin(np.pi * (hour_fractional - 6) / 12)
+            else:
+                rad_factor = 0.0
+            sw = rad * rad_factor
+            # 估算 direct / diffuse
+            direct = sw * 0.7
+            diffuse = sw * 0.3
+            dni = sw / max(np.cos(np.radians(30)), 0.1)
+            # 缩放
+            next_feat[3] = (sw - scaler.data_min_[3]) / (scaler.data_max_[3] - scaler.data_min_[3] + 1e-8)
+            next_feat[4] = (direct - scaler.data_min_[4]) / (scaler.data_max_[4] - scaler.data_min_[4] + 1e-8)
+            next_feat[5] = (diffuse - scaler.data_min_[5]) / (scaler.data_max_[5] - scaler.data_min_[5] + 1e-8)
+            next_feat[6] = (dni - scaler.data_min_[6]) / (scaler.data_max_[6] - scaler.data_min_[6] + 1e-8)
+        else:
+            # 没有天气数据时, 从历史窗口最后一行沿用辐射值
+            next_feat[3:] = window[-1, 3:]
+
         window = np.vstack([window, next_feat.reshape(1, -1)])
+
     return np.array(outputs)
 
 
 def _predict_charging(model, n_steps):
-    import pandas as pd
-    seq_len = CHARGING_LOOKBACK
-    aligned_path = DATA_ALIGNED
-    if os.path.exists(aligned_path):
-        df = pd.read_csv(aligned_path)
-        window = _build_charging_window(df, seq_len)
+    """充电迭代预测 (使用 scaler_X/scaler_y + 充电测试数据历史)"""
+    scaler_X, scaler_y = _load_charging_scalers()
+    df = _load_charging_df()
+
+    seq_len = CHARGING_LOOKBACK  # 96
+
+    if df is not None and scaler_X is not None:
+        window = _build_charging_window(df, seq_len, scaler_X)
     else:
-        window = np.random.randn(seq_len, CHARGING_FEATURE_DIM).astype(np.float32) * 0.1
+        window = np.random.randn(seq_len, 6).astype(np.float32) * 0.1
+
+    if window is None:
+        window = np.random.randn(seq_len, 6).astype(np.float32) * 0.1
+
+    if len(window) < seq_len:
+        pad = seq_len - len(window)
+        window = np.vstack([np.zeros((pad, 6), dtype=np.float32), window])
+
+    window = window[-seq_len:]
+
+    # 充电特征: price, lag_1, lag_96, lag_672, rolling_std_4, rolling_mean_4
+    # 训练数据 label: load_kw (已 scaler_y.transform)
+    # 我们持续维护 "预测值历史" 用于 lag 特征更新
+
+    # 获取最近一条的 load_kw 真实值 (逆归一化后)
+    last_real_load = 0.0
+    if df is not None and scaler_y is not None:
+        last_idx = min(len(df) - 1, seq_len - 1)
+        try:
+            # 直接取原始值
+            last_real_load = float(df['load_kw'].iloc[-1])
+        except:
+            last_real_load = 875.0  # 训练集均值作为 fallback
+    else:
+        last_real_load = 875.0
+
+    # 维护预测值队列 (用于 lag_1, lag_96, lag_672)
+    pred_history = []
+
+    # 电价: 根据当前时间决定
+    now = datetime.now()
+    current_hour = now.hour
+
+    def get_price(hour):
+        if 8 <= hour < 11 or 18 <= hour < 21:
+            return 1.0  # peak
+        elif 6 <= hour < 8 or 11 <= hour < 18 or 21 <= hour < 22:
+            return 0.6  # mid
+        else:
+            return 0.3  # valley
+
     outputs = []
-    hour_now = datetime.now().hour
     for i in range(n_steps):
-        if len(window) < seq_len:
-            window = np.pad(window, ((seq_len - len(window), 0), (0, 0)), mode="edge")
         inp = torch.FloatTensor(window[-seq_len:]).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            pred = model(inp).item()
-        outputs.append(max(pred, 0))
-        next_feat = window[-1].copy()
-        hour = (hour_now + (i + 1) * 0.25) % 24
-        next_feat[1] = np.sin(2 * np.pi * hour / 24)
-        next_feat[2] = np.cos(2 * np.pi * hour / 24)
-        next_feat[0] = pred
+            pred_scaled = model(inp).item()
+
+        # 逆归一化得到真实负荷
+        pred_real = float(scaler_y.inverse_transform([[pred_scaled]])[0, 0])
+        pred_real = max(pred_real, 0.0)
+
+        outputs.append(pred_real)
+        pred_history.append(pred_real)
+
+        # 构建下一步特征
+        hour_fractional = (current_hour + (i + 1) * 0.25) % 24
+        price_val = get_price(int(hour_fractional))
+
+        # lag_1: 上一时刻的负荷
+        lag_1 = pred_real
+
+        # lag_96: 24小时前的负荷 (用最近一次预测或历史)
+        if len(pred_history) >= 96:
+            lag_96 = pred_history[-96]
+        elif df is not None and len(df) >= 96:
+            lag_96 = float(df['load_kw'].iloc[-96 + i]) if i < 96 else pred_real
+        else:
+            lag_96 = pred_real
+
+        # lag_672: 7天前的负荷
+        if df is not None and len(df) >= 672:
+            lag_672 = float(df['load_kw'].iloc[-672 + i]) if i < 672 else pred_real
+        else:
+            lag_672 = pred_real
+
+        # rolling_std_4 / rolling_mean_4: 基于最近预测值计算
+        if len(pred_history) >= 4:
+            recent = np.array(pred_history[-4:])
+            rolling_std_4 = float(np.std(recent))
+            rolling_mean_4 = float(np.mean(recent))
+        elif df is not None and len(df) >= 5:
+            recent_idx = min(len(df) - 1, max(0, len(df) - 4 + i))
+            vals = df['load_kw'].iloc[max(0, recent_idx - 3):recent_idx + 1].values
+            rolling_std_4 = float(np.std(vals))
+            rolling_mean_4 = float(np.mean(vals))
+        else:
+            rolling_std_4 = 222.0  # 训练集均值
+            rolling_mean_4 = 875.0
+
+        next_feat_raw = np.array([[price_val, lag_1, lag_96, lag_672, rolling_std_4, rolling_mean_4]], dtype=np.float32)
+        next_feat = scaler_X.transform(next_feat_raw)[0]
+
         window = np.vstack([window, next_feat.reshape(1, -1)])
+
     mean = np.array(outputs)
-    return mean, mean * 0.85, mean * 1.15
+    # 不确定性: 简单使用 15% 波动
+    lower = mean * 0.85
+    upper = mean * 1.15
+    return mean, lower, upper
 
 
 def _fallback_solar(n_steps, weather):

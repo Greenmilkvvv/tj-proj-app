@@ -21,6 +21,8 @@ from data_service import (
     get_training_loss_chart, run_backtest_charging,
     build_error_distribution_chart, build_error_by_hour_chart,
     get_solar_model_info,
+    run_backtest_solar,
+    build_solar_error_distribution_chart, build_solar_error_by_hour_chart,
 )
 from prediction_service import run_prediction, generate_strategy
 
@@ -350,30 +352,42 @@ def _generate_strategy_ui():
 def build_error_tab():
     """构建误差分析 Tab 的 UI 组件"""
     btn_run_eval = gr.Button("🔍 运行评估", variant="primary")
-    
-    # gr.Markdown("### 📉 充电模型训练曲线")
-    # training_loss_chart = gr.Plot(label="训练 Loss")
-    # training_loss_status = gr.Markdown("")
-    
+
+    # ---- 充电模型 ----
+    gr.Markdown("## ⚡ 充电模型 (TCN-Attention-LSTM)")
+
     gr.Markdown("### 📊 充电模型回测")
-    backtest_chart = gr.Plot(label="真实值 vs 预测值")
-    backtest_summary = gr.Markdown("")
-    
-    gr.Markdown("### 📈 残差分布分析")
+    charging_backtest_chart = gr.Plot(label="充电 — 真实值 vs 预测值")
+    charging_backtest_summary = gr.Markdown("")
+
+    gr.Markdown("### 📈 充电残差分布分析")
     with gr.Row():
-        error_dist_chart = gr.Plot(label="残差分布直方图")
-        error_hour_chart = gr.Plot(label="按小时误差")
-    
-    gr.Markdown("### ☀️ 光伏模型信息")
+        charging_error_dist_chart = gr.Plot(label="充电残差分布直方图")
+        charging_error_hour_chart = gr.Plot(label="充电按小时误差")
+
+    # ---- 光伏模型 ----
+    gr.Markdown("## ☀️ 光伏模型 (LSTM + GAN)")
+
+    gr.Markdown("### 📊 光伏模型回测")
+    solar_backtest_chart = gr.Plot(label="光伏 — 真实值 vs 预测值")
+    solar_backtest_summary = gr.Markdown("")
+
+    gr.Markdown("### 📈 光伏残差分布分析")
+    with gr.Row():
+        solar_error_dist_chart = gr.Plot(label="光伏残差分布直方图")
+        solar_error_hour_chart = gr.Plot(label="光伏按小时误差")
+
+    gr.Markdown("### 📋 光伏模型信息")
     solar_model_info = gr.Markdown("")
-    
+
     btn_run_eval.click(
         fn=_run_evaluation,
         inputs=[],
         outputs=[
-            # training_loss_chart, training_loss_status
-            backtest_chart, backtest_summary,
-            error_dist_chart, error_hour_chart,
+            charging_backtest_chart, charging_backtest_summary,
+            charging_error_dist_chart, charging_error_hour_chart,
+            solar_backtest_chart, solar_backtest_summary,
+            solar_error_dist_chart, solar_error_hour_chart,
             solar_model_info,
         ],
     )
@@ -381,23 +395,25 @@ def build_error_tab():
 
 
 def _run_evaluation():
-    """执行误差分析"""
-    # 训练曲线
-    loss_fig, loss_msg = get_training_loss_chart()
-    
-    # 回测
-    backtest_fig, backtest_msg = run_backtest_charging()
-    
-    # 残差分布
-    error_dist_fig = build_error_distribution_chart()
-    
-    # 按小时误差
-    error_hour_fig = build_error_by_hour_chart()
-    
-    # 光伏模型信息
+    """执行误差分析（充电 + 光伏）"""
+    # --- 充电模型 ---
+    charging_backtest_fig, charging_backtest_msg = run_backtest_charging()
+    charging_error_dist_fig = build_error_distribution_chart()
+    charging_error_hour_fig = build_error_by_hour_chart()
+
+    # --- 光伏模型 ---
+    solar_backtest_fig, solar_backtest_msg = run_backtest_solar()
+    solar_error_dist_fig = build_solar_error_distribution_chart()
+    solar_error_hour_fig = build_solar_error_by_hour_chart()
     solar_info = get_solar_model_info()
-    
-    return loss_fig, loss_msg, backtest_fig, backtest_msg, error_dist_fig, error_hour_fig, solar_info
+
+    return (
+        charging_backtest_fig, charging_backtest_msg,
+        charging_error_dist_fig, charging_error_hour_fig,
+        solar_backtest_fig, solar_backtest_msg,
+        solar_error_dist_fig, solar_error_hour_fig,
+        solar_info,
+    )
 
 
 # ============================================================

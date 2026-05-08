@@ -1,5 +1,7 @@
 # Python 执行规则
 
+**Attention: ** 不要再修改功能文档
+
 【强制】执行 Python 脚本时，必须使用 `py -3.10` 命令，而不是 `python`。
 原因：系统默认的 `python` 命令不可用。
 

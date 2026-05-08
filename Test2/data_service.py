@@ -586,6 +586,336 @@ def build_error_by_hour_chart():
 
 
 # ============================================================
+# 误差分析 — 光伏模型回测
+# ============================================================
+def _solar_sliding_backtest(df, feature_cols, target_col="power", lookback=24):
+    """光伏滑动窗口回测：使用真实 LSTM 模型逐步预测"""
+    import sys
+    import torch
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Solar_Forecast"))
+    try:
+        from NN import LSTMPredictor, GeneratorWithFeatures
+    except ImportError:
+        # 回退到 prediction_service 中的定义
+        from prediction_service import LSTMPredictor, GeneratorWithFeatures
+
+    from config import SOLAR_MODEL_PTH, SOLAR_FEATURE_DIM
+
+    scaler_path = os.path.join(ROOT_DIR, "Solar_Forecast", "simple_scaler_1.pkl")
+    if not os.path.exists(scaler_path) or not os.path.exists(SOLAR_MODEL_PTH):
+        return None, None
+
+    try:
+        import joblib
+        scaler = joblib.load(scaler_path)
+    except Exception:
+        import pickle
+        with open(scaler_path, "rb") as f:
+            scaler = pickle.load(f)
+
+    # 确保 df 包含所有特征列
+    available = [c for c in feature_cols if c in df.columns]
+    if len(available) < 4:  # 至少需要 power + 3 个辐射列
+        return None, None
+
+    data = df[feature_cols].values.astype(np.float64)
+    n = len(data)
+    if n < lookback + 10:
+        return None, None
+
+    # 标准化
+    data_scaled = scaler.transform(data)
+
+    # 加载模型
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    lstm = LSTMPredictor(
+        input_size=SOLAR_FEATURE_DIM, hidden_size=128,
+        num_layers=2, output_size=1, dropout=0.2, bidirectional=False,
+    )
+    model = GeneratorWithFeatures(lstm)
+    state = torch.load(SOLAR_MODEL_PTH, map_location=DEVICE, weights_only=True)
+    model.load_state_dict(state)
+    model.to(DEVICE)
+    model.eval()
+
+    y_true = []
+    y_pred = []
+
+    with torch.no_grad():
+        for i in range(lookback, n):
+            inp = torch.FloatTensor(data_scaled[i - lookback:i]).unsqueeze(0).to(DEVICE)
+            pred_scaled = model(inp).item()
+
+            # 反标准化 (MinMaxScaler, power 在索引 0)
+            p_min = scaler.data_min_[0]
+            p_max = scaler.data_max_[0]
+            pred_real = pred_scaled * (p_max - p_min) + p_min
+            pred_real = max(pred_real, 0.0)
+
+            y_pred.append(pred_real)
+            y_true.append(data[i, 0])
+
+    return np.array(y_true), np.array(y_pred)
+
+
+def run_backtest_solar():
+    """对光伏预测模型进行回测，返回指标和图表"""
+    aligned_path = DATA_ALIGNED
+    if not os.path.exists(aligned_path):
+        fig = go.Figure()
+        fig.add_annotation(text="对齐数据文件不存在", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 数据文件不存在"
+
+    df = pd.read_csv(aligned_path, parse_dates=["datetime"])
+    df.sort_values("datetime", inplace=True)
+
+    # 特征工程：与训练时保持一致
+    df["hour"] = df["datetime"].dt.hour
+    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+
+    feature_cols = [
+        "power", "hour_sin", "hour_cos",
+        "shortwave_radiation (W/m2)", "direct_radiation (W/m2)",
+        "diffuse_radiation (W/m2)", "direct_normal_irradiance (W/m2)",
+    ]
+
+    for c in feature_cols:
+        if c not in df.columns:
+            fig = go.Figure()
+            fig.add_annotation(text=f"缺失列: {c}", showarrow=False, font=dict(size=14))
+            fig.update_layout(height=350, template="plotly_white")
+            return fig, f"⚠️ 数据列缺失: {c}"
+
+    y_true, y_pred = _solar_sliding_backtest(df, feature_cols)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="光伏模型加载失败或样本不足", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 光伏模型不可用"
+
+    residuals = y_true - y_pred
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    mae = np.mean(np.abs(residuals))
+    nonzero = np.abs(y_true) > 1  # 光伏功率阈值 1kW（低于充电的10kW）
+    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+
+    # R² 计算
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+    # 下采样展示（只取白天有功率的时段，晚间0功率无意义）
+    daytime_mask = y_true > 0.5
+    daytime_indices = np.where(daytime_mask)[0]
+    n_show = min(300, len(daytime_indices))
+    if n_show > 0:
+        idx = np.linspace(0, len(daytime_indices) - 1, n_show).astype(int)
+        show_indices = daytime_indices[idx]
+        t_show = y_true[show_indices]
+        p_show = y_pred[show_indices]
+        r_show = residuals[show_indices]
+    else:
+        n_all = min(200, len(y_true))
+        idx = np.linspace(0, len(y_true) - 1, n_all).astype(int)
+        t_show = y_true[idx]
+        p_show = y_pred[idx]
+        r_show = residuals[idx]
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.55, 0.45],
+        subplot_titles=("光伏真实值 vs 预测值 (回测·日间时段)", "残差分布 (真实 - 预测)"),
+        vertical_spacing=0.12,
+    )
+
+    fig.add_trace(go.Scatter(
+        x=list(range(len(t_show))), y=t_show,
+        mode="lines", name="真实值",
+        line=dict(color="#4caf50", width=2),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=list(range(len(p_show))), y=p_show,
+        mode="lines", name="预测值",
+        line=dict(color="#ff9800", width=1.5, dash="dot"),
+    ), row=1, col=1)
+
+    colors_res = ["#4caf50" if v >= 0 else "#f44336" for v in r_show]
+    fig.add_trace(go.Bar(
+        x=list(range(len(r_show))), y=r_show,
+        marker_color=colors_res, name="残差", opacity=0.6,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="#666", row=2, col=1)
+
+    fig.update_xaxes(title_text="样本序号 (仅日间)", row=2, col=1)
+    fig.update_yaxes(title_text="功率 (kW)", row=1, col=1)
+    fig.update_yaxes(title_text="残差 (kW)", row=2, col=1)
+    fig.update_layout(
+        height=550,
+        template="plotly_white",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+
+    summary = (
+        f"### ☀️ 光伏回测指标 (n={len(y_true)})\n\n"
+        f"| 指标 | 值 |\n"
+        f"|------|----|\n"
+        f"| RMSE | **{rmse:.2f}** kW |\n"
+        f"| MAE  | **{mae:.2f}** kW |\n"
+        f"| MAPE | **{mape:.1f}%** (功率>1kW) |\n"
+        f"| R²   | **{r2:.4f}** |\n"
+    )
+
+    return fig, summary
+
+
+def build_solar_error_distribution_chart():
+    """光伏残差分布直方图（带正态拟合）"""
+    aligned_path = DATA_ALIGNED
+    if not os.path.exists(aligned_path):
+        fig = go.Figure()
+        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    df = pd.read_csv(aligned_path, parse_dates=["datetime"])
+    df.sort_values("datetime", inplace=True)
+    df["hour"] = df["datetime"].dt.hour
+    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+
+    feature_cols = [
+        "power", "hour_sin", "hour_cos",
+        "shortwave_radiation (W/m2)", "direct_radiation (W/m2)",
+        "diffuse_radiation (W/m2)", "direct_normal_irradiance (W/m2)",
+    ]
+    y_true, y_pred = _solar_sliding_backtest(df, feature_cols)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    residuals = y_true - y_pred
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=residuals,
+        nbinsx=50,
+        marker_color="#4caf50",
+        opacity=0.75,
+        name="光伏残差",
+    ))
+    fig.add_vline(
+        x=0, line_dash="dash", line_color="#f44336", line_width=2,
+        annotation_text="0",
+    )
+
+    # 正态拟合参考线
+    mu, sigma = np.mean(residuals), np.std(residuals)
+    x_span = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
+    y_pdf = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_span - mu) / sigma) ** 2)
+    bin_width = (residuals.max() - residuals.min()) / 50 if residuals.max() > residuals.min() else 1
+    y_scaled = y_pdf * len(residuals) * bin_width
+    fig.add_trace(go.Scatter(
+        x=x_span, y=y_scaled,
+        mode="lines",
+        name=f"正态拟合 (μ={mu:.1f}, σ={sigma:.1f})",
+        line=dict(color="#f44336", width=2, dash="dot"),
+    ))
+
+    fig.update_layout(
+        title="光伏残差分布直方图",
+        xaxis=dict(title="残差 (kW)"),
+        yaxis=dict(title="频次"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        bargap=0.05,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def build_solar_error_by_hour_chart():
+    """光伏按小时分组的误差分析 (MAE & RMSE)"""
+    aligned_path = DATA_ALIGNED
+    if not os.path.exists(aligned_path):
+        fig = go.Figure()
+        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    df = pd.read_csv(aligned_path, parse_dates=["datetime"])
+    df.sort_values("datetime", inplace=True)
+    df["hour"] = df["datetime"].dt.hour
+    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+
+    feature_cols = [
+        "power", "hour_sin", "hour_cos",
+        "shortwave_radiation (W/m2)", "direct_radiation (W/m2)",
+        "diffuse_radiation (W/m2)", "direct_normal_irradiance (W/m2)",
+    ]
+    y_true, y_pred = _solar_sliding_backtest(df, feature_cols)
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig
+
+    # 提取对应的小时
+    lookback = 24
+    n_test = len(y_true)
+    ts_all = df["datetime"].values
+    if len(ts_all) < lookback + n_test:
+        ts_test = ts_all[-n_test:]
+    else:
+        ts_test = ts_all[lookback: lookback + n_test]
+    hours = np.array([pd.Timestamp(t).hour for t in ts_test[:n_test]])
+
+    error_df = pd.DataFrame({
+        "hour": hours,
+        "abs_error": np.abs(y_true - y_pred),
+        "sq_error": (y_true - y_pred) ** 2,
+    })
+    hourly = error_df.groupby("hour").agg(
+        MAE=("abs_error", "mean"),
+        RMSE=("sq_error", lambda x: np.sqrt(x.mean())),
+        count=("sq_error", "count"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hourly["hour"], y=hourly["MAE"],
+        name="MAE (kW)",
+        marker_color="#4caf50",
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=hourly["hour"], y=hourly["RMSE"],
+        mode="lines+markers",
+        name="RMSE (kW)",
+        line=dict(color="#f44336", width=2),
+        marker=dict(size=6),
+    ))
+
+    fig.update_layout(
+        title="光伏按小时误差分析 (MAE & RMSE)",
+        xaxis=dict(title="小时", dtick=2),
+        yaxis=dict(title="误差 (kW)"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+# ============================================================
 # 误差分析 — 光伏模型性能参考
 # ============================================================
 def get_solar_model_info():
@@ -624,7 +954,7 @@ def get_solar_model_info():
         "2. **Discriminator**: 判别器鉴别生成 vs 真实功率",
         "3. **对抗训练**: 提升预测分布的真实性",
         "",
-        "> ⚠️ 光伏模型训练历史文件未单独保存，无法展示训练 Loss 曲线。",
+        # "> ⚠️ 光伏模型训练历史文件未单独保存，无法展示训练 Loss 曲线。",
     ]
 
     return "\n".join(lines)

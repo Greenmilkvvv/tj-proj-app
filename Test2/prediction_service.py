@@ -91,7 +91,7 @@ if TORCH_AVAILABLE:
             _, (hn, _) = self.lstm(x_attn)
             lstm_out = hn[-1]
             combined = torch.cat([lstm_out, raw_last_step], dim=1)
-            return torch.relu(self.fc(combined))
+            return self.fc(combined)
 
 
 # ============================================================
@@ -530,7 +530,14 @@ def _predict_charging(model, n_steps):
 
         # 逆归一化得到真实负荷
         pred_real = float(scaler_y.inverse_transform([[pred_scaled]])[0, 0])
-        pred_real = max(pred_real, 0.0)
+        # 安全阈值：如果 ReLU 输出为 0 导致预测为负，用上一个非零值替代
+        # 彻底避免死亡螺旋——模型训练时 ReLU 夹断 0 是正常的，但迭代预测中 0 会污染 lag 特征
+        if pred_real <= 0 and len(outputs) > 0:
+            # 用最近一个正预测值
+            prev_positive = [v for v in outputs if v > 0]
+            pred_real = prev_positive[-1] if prev_positive else 100.0  # fallback: 100 kW
+        elif pred_real <= 0:
+            pred_real = 100.0  # 第一步为 0 时用保守估计
 
         outputs.append(pred_real)
         pred_history.append(pred_real)

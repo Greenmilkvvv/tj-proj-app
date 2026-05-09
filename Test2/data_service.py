@@ -15,6 +15,25 @@ warnings.filterwarnings("ignore")
 
 from config import DATA_ALL_TRAIN, DATA_ALL_TEST, DATA_ALIGNED, DATA_SELECTED_TEST, ROOT_DIR
 
+# 导入上传服务
+try:
+    from upload_service import get_charging_data, get_solar_data, has_uploaded_data
+except ImportError:
+    # 容错：如果 upload_service 不可用
+    def get_charging_data():
+        return _load_csv(DATA_SELECTED_TEST)
+    def get_solar_data():
+        if os.path.exists(DATA_ALIGNED):
+            df = pd.read_csv(DATA_ALIGNED, parse_dates=["datetime"])
+            df.sort_values("datetime", inplace=True)
+            df["hour"] = pd.to_datetime(df["datetime"]).dt.hour
+            df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+            df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+            return df
+        return None
+    def has_uploaded_data(x=None):
+        return False
+
 
 # ============================================================
 # 数据加载（懒加载 + 缓存）
@@ -40,6 +59,14 @@ def get_train_data():
 
 def get_test_data():
     return _load_csv(DATA_ALL_TEST)
+
+def get_merged_charging():
+    """获取合并后的充电数据 (历史 + 上传), 优先使用上传数据"""
+    return get_charging_data()
+
+def get_merged_solar():
+    """获取合并后的光伏数据 (历史 + 上传), 优先使用上传数据"""
+    return get_solar_data()
 
 
 # ============================================================
@@ -319,88 +346,158 @@ def get_training_loss_chart():
 
 
 # ============================================================
-# 误差分析 — 充电模型回测
+# 误差分析 — 充电模型回测 (真实 TCN-Attention-LSTM 模型)
 # ============================================================
-def _rolling_window_backtest(df, feature_cols, target_col, lookback=96):
-    """滑动窗口回测：使用 sklearn MLP 代理模型评估预测性能"""
-    from sklearn.neural_network import MLPRegressor
-    from sklearn.preprocessing import StandardScaler
+def _real_charging_sliding_backtest(df, feature_cols, target_col="load_kw", lookback=96):
+    """充电滑动窗口回测：使用真实 TCN-Attention-LSTM 模型逐步预测"""
+    import torch
+    try:
+        from prediction_service import HybridModel
+    except ImportError:
+        # 回退：直接导入
+        import torch.nn as nn
+        class HybridModel(nn.Module):
+            pass  # 占位，实际上会从 prediction_service 加载
 
-    data = df[feature_cols + [target_col]].dropna().values.astype(np.float64)
+    from config import CHARGING_MODEL_PTH, CHARGING_FEATURE_DIM
+    import pickle as pkl
+
+    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_X.pkl")
+    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_y.pkl")
+
+    if not os.path.exists(scaler_X_path) or not os.path.exists(scaler_y_path):
+        return None, None, "充电 scaler 文件不存在"
+    if not os.path.exists(CHARGING_MODEL_PTH):
+        return None, None, "充电模型权重不存在"
+
+    # 加载 scaler
+    with open(scaler_X_path, 'rb') as f:
+        scaler_X = pkl.load(f)
+    with open(scaler_y_path, 'rb') as f:
+        scaler_y = pkl.load(f)
+
+    # 确保数据列存在
+    for c in feature_cols + [target_col]:
+        if c not in df.columns:
+            return None, None, f"数据缺失列: {c}"
+
+    data = df[feature_cols].values.astype(np.float64)
+    target = df[target_col].values.astype(np.float64)
     n = len(data)
+
     if n < lookback + 10:
-        return None, None, None, None
+        return None, None, f"数据不足 (n={n}, need >={lookback+10})"
 
-    X_all, y_all = [], []
-    for i in range(n - lookback):
-        X_all.append(data[i:i + lookback, :-1].flatten())
-        y_all.append(data[i + lookback, -1])
-    X_all = np.array(X_all)
-    y_all = np.array(y_all)
+    # 标准化特征
+    from sklearn.preprocessing import MinMaxScaler
+    data_scaled = scaler_X.transform(data)
 
-    split = int(len(X_all) * 0.6)
-    if split < 2:
-        return None, None, None, None
+    # 加载模型
+    # 推断 hidden_size
+    import torch.nn as nn
+    # 从 prediction_service 导入模型定义
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from prediction_service import HybridModel, TCNBlock, SimpleAttention
+    del sys.path[0]
 
-    X_train, y_train = X_all[:split], y_all[:split]
-    X_test, y_test = X_all[split:], y_all[split:]
+    state = torch.load(CHARGING_MODEL_PTH, map_location="cpu", weights_only=True)
+    # 推断 hidden_size
+    hidden_size = CHARGING_FEATURE_DIM  # fallback
+    for k in state:
+        if "lstm.weight_ih_l0" in k:
+            hidden_size = state[k].shape[0] // 4
+            break
 
-    scaler_x = StandardScaler()
-    scaler_y = StandardScaler()
-    X_train_s = scaler_x.fit_transform(X_train)
-    y_train_s = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()
+    device = "cpu"
+    model = HybridModel(input_dim=CHARGING_FEATURE_DIM, hidden_dim=hidden_size, output_dim=1)
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
 
-    model = MLPRegressor(
-        hidden_layer_sizes=(64, 32),
-        max_iter=300,
-        random_state=42,
-        early_stopping=True,
-        validation_fraction=0.1,
-    )
-    model.fit(X_train_s, y_train_s)
+    y_true = []
+    y_pred = []
 
-    X_test_s = scaler_x.transform(X_test)
-    y_pred_s = model.predict(X_test_s)
-    y_pred = scaler_y.inverse_transform(y_pred_s.reshape(-1, 1)).ravel()
-    y_true = y_test
+    with torch.no_grad():
+        for i in range(lookback, n):
+            # 取窗口 (lookback 步 x 6 特征)
+            window = torch.FloatTensor(data_scaled[i - lookback:i]).unsqueeze(0).to(device)
+            pred_scaled = model(window).item()
 
-    return y_true, y_pred, X_test.shape[0], model
+            # 反标准化
+            pred_real = float(scaler_y.inverse_transform([[pred_scaled]])[0, 0])
+            pred_real = max(pred_real, 0.0)
+
+            y_pred.append(pred_real)
+            y_true.append(target[i])
+
+    return np.array(y_true), np.array(y_pred), "ok"
 
 
 def run_backtest_charging():
-    """对充电负荷测试集进行回测，返回指标和图表"""
-    df = _load_csv(DATA_SELECTED_TEST)
-    if df is None or len(df) < 100:
+    """对充电负荷数据进行回测（真实模型），优先使用上传数据，返回指标和图表"""
+    # 优先使用合并数据 (含上传)
+    df = get_merged_charging()
+    using_upload = has_uploaded_data("charging")
+
+    if df is None:
         fig = go.Figure()
-        fig.add_annotation(text="测试数据不足", showarrow=False, font=dict(size=14))
+        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
         fig.update_layout(height=350, template="plotly_white")
-        return fig, "⚠️ 数据不足"
+        return fig, "⚠️ 无可用数据"
 
     feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
     target_col = "load_kw"
 
+    # 确保时间列为 datetime
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # 仅在上传数据区域运行回测（如果存在上传数据）
+    if using_upload:
+        try:
+            from upload_service import _upload_cache
+            upload_df = _upload_cache.get("charging")
+            if upload_df is not None and len(upload_df) >= 100:
+                upload_df = upload_df.copy()
+                upload_df["timestamp"] = pd.to_datetime(upload_df["timestamp"])
+                upload_df = upload_df.sort_values("timestamp").reset_index(drop=True)
+                # 确保所有特征列存在
+                for c in feature_cols:
+                    if c not in upload_df.columns:
+                        return _error_fig_and_msg(f"上传数据缺少特征列: {c}")
+                df = upload_df  # 仅在上传数据上回测
+        except Exception as e:
+            print(f"[WARN] 获取上传数据失败: {e}")
+
+    if len(df) < 100:
+        fig = go.Figure()
+        fig.add_annotation(text=f"数据不足 (n={len(df)}, 需要 ≥100)", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, f"⚠️ 数据不足 (仅 {len(df)} 行)"
+
     for c in feature_cols + [target_col]:
         if c not in df.columns:
-            fig = go.Figure()
-            fig.add_annotation(text=f"缺失列: {c}", showarrow=False, font=dict(size=14))
-            fig.update_layout(height=350, template="plotly_white")
-            return fig, f"⚠️ 数据列缺失: {c}"
+            return _error_fig_and_msg(f"数据缺失列: {c}")
 
-    y_true, y_pred, test_size, model = _rolling_window_backtest(df, feature_cols, target_col)
-    if y_true is None:
-        fig = go.Figure()
-        fig.add_annotation(text="回测样本不足", showarrow=False, font=dict(size=14))
-        fig.update_layout(height=350, template="plotly_white")
-        return fig, "⚠️ 样本不足"
+    result = _real_charging_sliding_backtest(df, feature_cols, target_col)
+    if result[0] is None:
+        return _error_fig_and_msg(result[2] if len(result) > 2 else "回测失败")
 
+    y_true, y_pred, _ = result
     residuals = y_true - y_pred
+
     rmse = np.sqrt(np.mean(residuals ** 2))
     mae = np.mean(np.abs(residuals))
     nonzero = np.abs(y_true) > 10
     mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
     # 下采样展示
-    n_show = min(200, len(y_true))
+    n_show = min(300, len(y_true))
     idx = np.linspace(0, len(y_true) - 1, n_show).astype(int)
     t_show = y_true[idx]
     p_show = y_pred[idx]
@@ -409,7 +506,7 @@ def run_backtest_charging():
     fig = make_subplots(
         rows=2, cols=1,
         row_heights=[0.55, 0.45],
-        subplot_titles=("真实值 vs 预测值 (回测)", "残差分布 (真实 - 预测)"),
+        subplot_titles=("真实值 vs 预测值 (真实 TCN-Attention-LSTM 模型)", "残差分布 (真实 - 预测)"),
         vertical_spacing=0.12,
     )
 
@@ -442,37 +539,49 @@ def run_backtest_charging():
         margin=dict(l=40, r=40, t=50, b=40),
     )
 
+    data_source = "**上传数据**" if using_upload else "历史测试集"
     summary = (
-        f"### 📊 回测指标 (n={len(y_true)})\n\n"
+        f"### 📊 充电回测指标 ({data_source}, n={len(y_true)})\n\n"
         f"| 指标 | 值 |\n"
         f"|------|----|\n"
         f"| RMSE | **{rmse:.2f}** kW |\n"
         f"| MAE  | **{mae:.2f}** kW |\n"
-        f"| MAPE | **{mape:.1f}%** |\n"
-        f"| 测试集大小 | {test_size} 个样本 |\n"
+        f"| MAPE | **{mape:.1f}%** (|load|>10kW) |\n"
+        f"| R²   | **{r2:.4f}** |\n"
+        f"\n> 使用真实 **TCN-Attention-LSTM** 模型滑动窗口滚动预测"
+        + ("\n> 基于上传数据评估，反映真实模型性能" if using_upload else "")
     )
 
     return fig, summary
 
 
+def _error_fig_and_msg(msg):
+    """辅助函数：返回错误图和消息"""
+    fig = go.Figure()
+    fig.add_annotation(text=msg, showarrow=False, font=dict(size=14))
+    fig.update_layout(height=350, template="plotly_white")
+    return fig, f"⚠️ {msg}"
+
+
 def build_error_distribution_chart():
-    """残差分布直方图（带正态拟合）"""
-    df = _load_csv(DATA_SELECTED_TEST)
+    """残差分布直方图（带正态拟合）— 使用真实模型回测结果"""
+    df = get_merged_charging()
     if df is None:
-        fig = go.Figure()
-        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
-        fig.update_layout(height=350, template="plotly_white")
-        return fig
+        return _error_fig_and_msg("数据不可用")[0]
 
     feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
     target_col = "load_kw"
-    y_true, y_pred, _, _ = _rolling_window_backtest(df, feature_cols, target_col)
-    if y_true is None:
-        fig = go.Figure()
-        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
-        fig.update_layout(height=350, template="plotly_white")
-        return fig
 
+    # 确保时间列
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+    result = _real_charging_sliding_backtest(df, feature_cols, target_col)
+    if result[0] is None:
+        return _error_fig_and_msg(result[2] if len(result) > 2 else "回测失败")[0]
+
+    y_true, y_pred, _ = result
     residuals = y_true - y_pred
 
     fig = go.Figure()
@@ -488,11 +597,10 @@ def build_error_distribution_chart():
         annotation_text="0",
     )
 
-    # 正态拟合参考线
     mu, sigma = np.mean(residuals), np.std(residuals)
     x_span = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
     y_pdf = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_span - mu) / sigma) ** 2)
-    bin_width = (residuals.max() - residuals.min()) / 50
+    bin_width = (residuals.max() - residuals.min()) / 50 if residuals.max() > residuals.min() else 1
     y_scaled = y_pdf * len(residuals) * bin_width
     fig.add_trace(go.Scatter(
         x=x_span, y=y_scaled,
@@ -502,7 +610,7 @@ def build_error_distribution_chart():
     ))
 
     fig.update_layout(
-        title="残差分布直方图",
+        title="残差分布直方图 (TCN-Attention-LSTM)",
         xaxis=dict(title="残差 (kW)"),
         yaxis=dict(title="频次"),
         margin=dict(l=40, r=40, t=40, b=40),
@@ -515,29 +623,29 @@ def build_error_distribution_chart():
 
 
 def build_error_by_hour_chart():
-    """按小时分组的误差分析 (MAE & RMSE)"""
-    df = _load_csv(DATA_SELECTED_TEST)
+    """按小时分组的误差分析 (MAE & RMSE) — 使用真实模型回测结果"""
+    df = get_merged_charging()
     if df is None:
-        fig = go.Figure()
-        fig.add_annotation(text="数据不可用", showarrow=False, font=dict(size=14))
-        fig.update_layout(height=350, template="plotly_white")
-        return fig
+        return _error_fig_and_msg("数据不可用")[0]
 
     feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
     target_col = "load_kw"
-    y_true, y_pred, _, _ = _rolling_window_backtest(df, feature_cols, target_col)
-    if y_true is None:
-        fig = go.Figure()
-        fig.add_annotation(text="回测失败", showarrow=False, font=dict(size=14))
-        fig.update_layout(height=350, template="plotly_white")
-        return fig
 
-    # 提取测试集小时
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+    result = _real_charging_sliding_backtest(df, feature_cols, target_col)
+    if result[0] is None:
+        return _error_fig_and_msg(result[2] if len(result) > 2 else "回测失败")[0]
+
+    y_true, y_pred, _ = result
+
+    # 提取对应的小时
     ts_col = "timestamp" if "timestamp" in df.columns else None
     if ts_col is None:
         hours = np.arange(len(y_true)) % 24
     else:
-        df[ts_col] = pd.to_datetime(df[ts_col])
         lookback = 96
         n_test = len(y_true)
         ts_all = df[ts_col].values
@@ -545,7 +653,7 @@ def build_error_by_hour_chart():
             ts_test = ts_all[-n_test:]
         else:
             ts_test = ts_all[lookback: lookback + n_test]
-        hours = np.array([getattr(pd.Timestamp(t).to_pydatetime(), 'hour', 0) for t in ts_test[:n_test]])
+        hours = np.array([pd.Timestamp(t).hour for t in ts_test[:n_test]])
 
     error_df = pd.DataFrame({
         "hour": hours,
@@ -574,7 +682,7 @@ def build_error_by_hour_chart():
     ))
 
     fig.update_layout(
-        title="按小时误差分析 (MAE & RMSE)",
+        title="按小时误差分析 (TCN-Attention-LSTM, MAE & RMSE)",
         xaxis=dict(title="小时", dtick=2),
         yaxis=dict(title="误差 (kW)"),
         margin=dict(l=40, r=40, t=40, b=40),

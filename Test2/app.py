@@ -23,8 +23,10 @@ from data_service import (
     get_solar_model_info,
     run_backtest_solar,
     build_solar_error_distribution_chart, build_solar_error_by_hour_chart,
+    get_merged_charging, get_merged_solar,
 )
 from prediction_service import run_prediction, generate_strategy
+from upload_service import save_uploaded_charging, save_uploaded_solar, get_upload_status
 
 # ============================================================
 # 全局缓存
@@ -284,9 +286,31 @@ def _empty_table():
 # ============================================================
 def build_data_tab():
     """构建数据探索 Tab 的 UI 组件"""
+    # ---- 数据上传区域 ----
+    gr.Markdown("### 📤 上传自定义数据")
+    gr.Markdown("上传 CSV 文件以扩展数据集。文件需包含 `timestamp` (格式 `YYYY-MM-DD HH:MM:SS`) 列及负荷/功率列。")
+
+    with gr.Row():
+        with gr.Column(scale=1):
+            upload_charging = gr.File(
+                label="⚡ 上传充电负荷数据 (CSV)",
+                file_types=[".csv"],
+                type="filepath",
+            )
+            upload_solar = gr.File(
+                label="☀️ 上传光伏功率数据 (CSV)",
+                file_types=[".csv"],
+                type="filepath",
+            )
+        with gr.Column(scale=1):
+            upload_status = gr.Markdown("📋 当前状态: 使用内置数据集")
+            btn_clear_upload = gr.Button("🗑️ 清除上传数据", variant="secondary", size="sm")
+
+    # ---- 数据集概览 ----
     gr.Markdown("### 📋 数据集概览")
     overview_html = gr.HTML(value=get_dataset_overview())
 
+    # ---- 历史日负荷曲线 ----
     gr.Markdown("### 📉 历史日负荷曲线")
     available_dates = get_available_dates()
     default_dates = available_dates[:2] if len(available_dates) >= 2 else available_dates
@@ -298,20 +322,45 @@ def build_data_tab():
     )
     daily_chart = gr.Plot(label="日负荷曲线")
 
+    # ---- 特征相关性分析 ----
     gr.Markdown("### 📊 特征相关性分析")
     corr_chart = gr.Plot(label="Pearson 相关系数", value=get_correlation_chart())
 
+    # ---- 小时级负荷画像 ----
     gr.Markdown("### ⏰ 小时级负荷画像")
     hourly_chart = gr.Plot(label="均值 ± 1σ", value=get_hourly_profile_chart())
 
-    # 事件绑定
+    # ===== 事件绑定（所有组件已定义） =====
+    # 上传事件
+    upload_charging.upload(
+        fn=_handle_charging_upload,
+        inputs=[upload_charging],
+        outputs=[upload_status],
+    ).then(
+        fn=lambda: (get_dataset_overview(), get_correlation_chart(), get_hourly_profile_chart()),
+        inputs=[],
+        outputs=[overview_html, corr_chart, hourly_chart],
+    )
+
+    upload_solar.upload(
+        fn=_handle_solar_upload,
+        inputs=[upload_solar],
+        outputs=[upload_status],
+    )
+
+    btn_clear_upload.click(
+        fn=_handle_clear_upload,
+        inputs=[],
+        outputs=[upload_status, overview_html, corr_chart, hourly_chart],
+    )
+
+    # 日期选择事件
     date_selector.change(
         fn=_update_daily_chart,
         inputs=[date_selector],
         outputs=[daily_chart],
     )
 
-    # 初始加载
     return date_selector, daily_chart, corr_chart, hourly_chart
 
 
@@ -319,6 +368,47 @@ def _update_daily_chart(date_strs):
     if len(date_strs) > 3:
         date_strs = date_strs[:3]
     return plot_daily_load_curves(date_strs)
+
+
+# ============================================================
+# 上传处理回调
+# ============================================================
+def _handle_charging_upload(filepath):
+    """处理充电负荷数据上传"""
+    if filepath is None:
+        return "📋 当前状态: 未选择文件"
+    try:
+        msg, ok = save_uploaded_charging(filepath)
+        if ok:
+            return f"✅ {msg}"
+        else:
+            return f"⚠️ {msg}"
+    except Exception as e:
+        return f"❌ 上传失败: {str(e)}"
+
+
+def _handle_solar_upload(filepath):
+    """处理光伏功率数据上传"""
+    if filepath is None:
+        return "📋 当前状态: 未选择文件"
+    try:
+        msg, ok = save_uploaded_solar(filepath)
+        if ok:
+            return f"✅ {msg}"
+        else:
+            return f"⚠️ {msg}"
+    except Exception as e:
+        return f"❌ 上传失败: {str(e)}"
+
+
+def _handle_clear_upload():
+    """清除上传数据"""
+    from upload_service import clear_uploaded_data
+    msg = clear_uploaded_data()
+    overview = get_dataset_overview()
+    corr = get_correlation_chart()
+    hourly = get_hourly_profile_chart()
+    return f"📋 {msg}", overview, corr, hourly
 
 
 # ============================================================

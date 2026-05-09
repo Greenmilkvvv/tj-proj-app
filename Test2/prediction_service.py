@@ -260,7 +260,29 @@ def load_charging_model():
 # 历史窗口构建
 # ============================================================
 def _load_aligned_df():
-    """加载 aligned CSV 并做特征工程 (与训练 notebook 一致)"""
+    """加载 aligned CSV 并做特征工程 (优先使用上传数据 + 历史合并)"""
+    # 优先使用上传数据 (含历史合并)
+    try:
+        from upload_service import get_solar_data as _get_upload_solar
+        df = _get_upload_solar()
+        if df is not None and len(df) > 0:
+            print(f"[INFO] 光伏历史窗口来源: 上传+历史合并数据 ({len(df)} 行)")
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            df.sort_values('datetime', inplace=True)
+            df['hour'] = df['datetime'].dt.hour
+            df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+            df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+            if 'theta' not in df.columns:
+                diffuse = df.get('diffuse_radiation (W/m2)', np.zeros(len(df)))
+                dni = df.get('direct_normal_irradiance (W/m2)', np.ones(len(df)))
+                sw = df.get('shortwave_radiation (W/m2)', np.zeros(len(df)))
+                dni_safe = np.where(np.abs(dni) < 1e-6, 1.0, dni)
+                cos_theta = np.clip((sw - diffuse) / dni_safe, -1.0, 1.0)
+                df['theta'] = np.arccos(cos_theta)
+            return df
+    except Exception as e:
+        print(f"[WARN] 上传数据加载失败，回退历史数据: {e}")
+
     aligned_path = os.path.join(ROOT_DIR, "Data", "aligned_2026_01_02.csv")
     if not os.path.exists(aligned_path):
         return None
@@ -269,7 +291,6 @@ def _load_aligned_df():
     df['hour'] = df['datetime'].dt.hour
     df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
     df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
-    # theta: 天顶角 (添加 clip 防除零)
     diffuse = df['diffuse_radiation (W/m2)'].values
     dni = df['direct_normal_irradiance (W/m2)'].values
     dni_safe = np.where(np.abs(dni) < 1e-6, 1.0, dni)

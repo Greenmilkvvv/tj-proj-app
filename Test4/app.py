@@ -27,6 +27,7 @@ from data_service import (
 )
 from prediction_service import run_prediction, generate_strategy
 from upload_service import save_uploaded_charging, save_uploaded_solar, has_uploaded_data, clear_uploaded_data
+from generate_sample_data import inject_sample_data
 
 # ============================================================
 # 全局缓存
@@ -70,7 +71,17 @@ CUSTOM_CSS = """
 .metric-label { font-size: 13px; opacity: 0.9; margin-top: 4px; }
 footer { visibility: hidden; }
 
-/* ---- Dark mode 修复 ---- */
+/* ---- Dark mode ---- */
+.dark .upload-card h3,
+.dark .upload-card p,
+.dark .upload-card .prose {
+    color: #e0e0e0 !important;
+}
+.dark .upload-card {
+    background: #1e1e1e !important;
+    border-color: #444 !important;
+}
+
 .dark table thead th,
 .dark .table-wrap thead th,
 .dark table th {
@@ -141,6 +152,14 @@ def build_upload_tab():
     文件需包含时间列及负荷/功率列，系统会自动计算缺失的衍生特征。
     """)
 
+    # ---- 示例数据开关 ----
+    with gr.Row():
+        use_sample = gr.Checkbox(
+            label="☑️ 使用示例数据（模拟 2026-03-01 ~ 当前日期）",
+            value=False,
+            info="勾选后将自动填充充电负荷和光伏出力的模拟数据，无需手动上传 CSV",
+        )
+
     with gr.Row():
         # 充电数据上传
         with gr.Column(scale=1, elem_classes="upload-card"):
@@ -203,6 +222,12 @@ def build_upload_tab():
     btn_clear.click(
         fn=_handle_clear_upload_v2,
         inputs=[],
+        outputs=[charging_status, solar_status, global_status, preview_charging, preview_solar],
+    )
+
+    use_sample.change(
+        fn=_handle_use_sample,
+        inputs=[use_sample],
         outputs=[charging_status, solar_status, global_status, preview_charging, preview_solar],
     )
 
@@ -280,6 +305,46 @@ def _handle_clear_upload_v2():
     _upload_data_available = False
     msg = clear_uploaded_data()
     return "📋 等待上传", "📋 等待上传", _build_upload_status_html(), None, None
+
+
+def _handle_use_sample(checked: bool):
+    """处理示例数据复选框切换"""
+    global _upload_data_available
+    import pandas as pd
+    from upload_service import _upload_cache
+
+    if checked:
+        # 生成并注入示例数据
+        try:
+            charging_df, solar_df = inject_sample_data()
+            # 自动补充 lag 特征（与正常上传流程一致）
+            from upload_service import _compute_lag_features
+            charging_df = _compute_lag_features(charging_df)
+            # 直接注入缓存（绕过 CSV 解析）
+            _upload_cache["charging"] = charging_df
+            _upload_cache["solar"] = solar_df
+            _upload_data_available = True
+
+            charging_status = (
+                f"✅ 示例充电数据就绪\n"
+                f"📅 时间范围: {charging_df['timestamp'].min()} ~ {charging_df['timestamp'].max()}\n"
+                f"📊 共 {len(charging_df)} 行"
+            )
+            solar_status = (
+                f"✅ 示例光伏数据就绪\n"
+                f"📅 时间范围: {solar_df['datetime'].min()} ~ {solar_df['datetime'].max()}\n"
+                f"📊 共 {len(solar_df)} 行"
+            )
+            preview_c = charging_df.head(5)
+            preview_s = solar_df.head(5)
+            return charging_status, solar_status, _build_upload_status_html(), preview_c, preview_s
+        except Exception as e:
+            return f"❌ 生成示例数据失败: {e}", "📋 等待上传", _build_upload_status_html(), None, None
+    else:
+        # 清除示例数据
+        _upload_cache.clear()
+        _upload_data_available = False
+        return "📋 等待上传", "📋 等待上传", _build_upload_status_html(), None, None
 
 # ============================================================
 # Tab 2: 预测核心

@@ -316,7 +316,21 @@ def _build_solar_window(df, seq_len, scaler):
 
 
 def _load_charging_df():
-    """加载充电测试数据 (供历史窗口使用)"""
+    """加载充电历史数据 (供历史窗口使用)，优先使用上传/示例数据"""
+    # 优先使用上传数据 (含历史合并 + 示例数据)
+    try:
+        from upload_service import get_charging_data
+        df = get_charging_data()
+        if df is not None and len(df) > 0:
+            print(f"[INFO] 充电历史窗口来源: 上传+历史合并数据 ({len(df)} 行)")
+            df = df.copy()
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.sort_values('timestamp', inplace=True)
+            return df
+    except Exception as e:
+        print(f"[WARN] 上传充电数据加载失败，回退历史数据: {e}")
+
+    # 回退：内置测试集
     test_path = os.path.join(ROOT_DIR, "Data", "dataset_selected_features_test.csv")
     if not os.path.exists(test_path):
         return None

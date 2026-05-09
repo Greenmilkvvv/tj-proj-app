@@ -79,9 +79,10 @@ PREDICTION_OPTIONS = {
     "6 小时": 24,
     "12 小时": 48, 
     "24 小时": 96, 
-    "48 小时": 192,
+    # "48 小时": 192,
 }
-DEFAULT_PREDICTION_STEPS = 24  # 默认 6h
+# DEFAULT_PREDICTION_STEPS = 24  # 默认 6h
+DEFAULT_PREDICTION_STEPS = 96  # 默认 24h
 
 # ============================================================
 # UI 配置

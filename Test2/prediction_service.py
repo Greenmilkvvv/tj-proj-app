@@ -183,7 +183,7 @@ SOLAR_FEATURE_COLS_7 = [
 ]
 
 if TORCH_AVAILABLE:
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DEVICE = "cpu"
     print(f"[INFO] 预测设备: {DEVICE}")
 
 

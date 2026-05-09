@@ -627,7 +627,7 @@ def _solar_sliding_backtest(df, feature_cols, target_col="power", lookback=24):
     data_scaled = scaler.transform(data)
 
     # 加载模型
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DEVICE = "cpu"
     lstm = LSTMPredictor(
         input_size=SOLAR_FEATURE_DIM, hidden_size=128,
         num_layers=2, output_size=1, dropout=0.2, bidirectional=False,

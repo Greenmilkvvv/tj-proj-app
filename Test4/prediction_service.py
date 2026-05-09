@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings("ignore")
 
+
 # PyTorch
 try:
     import torch
@@ -131,8 +132,11 @@ if TORCH_AVAILABLE:
 # ============================================================
 # Scaler 加载
 # ============================================================
+
 def _load_charging_scalers():
-    """加载充电模型 scaler (MinMaxScaler)"""
+    """直接加载训练时保存的 scaler，不做重拟合。
+    重拟合会改变数据分布映射，与模型训练权重不匹配。
+    """
     import pickle
     scaler_X_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_X.pkl")
     scaler_y_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_y.pkl")
@@ -143,7 +147,7 @@ def _load_charging_scalers():
         scaler_X = pickle.load(f)
     with open(scaler_y_path, 'rb') as f:
         scaler_y = pickle.load(f)
-    print("[OK] 充电 scaler 加载成功")
+    print("[OK] 充电 scaler 加载成功 (训练时)")
     return scaler_X, scaler_y
 
 
@@ -565,14 +569,11 @@ def _predict_charging(model, n_steps):
 
         # 逆归一化得到真实负荷
         pred_real = float(scaler_y.inverse_transform([[pred_scaled]])[0, 0])
-        # 安全阈值：如果 ReLU 输出为 0 导致预测为负，用上一个非零值替代
-        # 彻底避免死亡螺旋——模型训练时 ReLU 夹断 0 是正常的，但迭代预测中 0 会污染 lag 特征
-        if pred_real <= 0 and len(outputs) > 0:
-            # 用最近一个正预测值
-            prev_positive = [v for v in outputs if v > 0]
-            pred_real = prev_positive[-1] if prev_positive else 100.0  # fallback: 100 kW
-        elif pred_real <= 0:
-            pred_real = 100.0  # 第一步为 0 时用保守估计
+        # 安全裁剪：限制在训练数据范围内的 80%~120%，防止异常值破坏 lag 特征
+        y_min = float(scaler_y.data_min_[0])
+        y_max = float(scaler_y.data_max_[0])
+        pred_real = max(pred_real, y_min * 0.8)
+        pred_real = min(pred_real, y_max * 1.2)
 
         outputs.append(pred_real)
         pred_history.append(pred_real)

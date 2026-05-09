@@ -50,10 +50,10 @@ def generate_charging_sample(start: str = "2026-03-01", end: str = None) -> pd.D
         else:
             return 1.0
 
-    # 工作日系数：工作日=1.0, 周末=0.75
+    # 工作日系数：工作日=1.0, 周末=0.65
     def weekday_factor(hour_ts):
         if hour_ts.weekday() >= 5:
-            return 0.75
+            return 0.65
         return 1.0
 
     loads = []
@@ -64,7 +64,7 @@ def generate_charging_sample(start: str = "2026-03-01", end: str = None) -> pd.D
         minute_adjust = 1.0 + 0.05 * np.sin(2 * np.pi * ts.minute / 60)
         seasonal_f = seasonal(ts)
         wd_f = weekday_factor(ts)
-        noise = rng.normal(0, 15)
+        noise = rng.normal(0, 40)
         load = base * minute_adjust * seasonal_f * wd_f + noise
         load = max(load, 50)  # 下限
         loads.append(round(load, 2))

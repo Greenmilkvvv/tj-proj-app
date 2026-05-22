@@ -554,12 +554,13 @@ def _predict_charging(model, n_steps):
     current_hour = now.hour
 
     def get_price(hour):
+        # 电价与训练数据一致: peak=0.85, mid=0.63, valley=0.25
         if 8 <= hour < 11 or 18 <= hour < 21:
-            return 1.0  # peak
+            return 0.85  # peak
         elif 6 <= hour < 8 or 11 <= hour < 18 or 21 <= hour < 22:
-            return 0.6  # mid
+            return 0.63  # mid
         else:
-            return 0.3  # valley
+            return 0.25  # valley
 
     outputs = []
     for i in range(n_steps):

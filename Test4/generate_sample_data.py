@@ -1,182 +1,189 @@
 """
-生成示例模拟数据 (2026-03-01 ~ 当前日期)
-提供充电负荷和光伏出力两组模拟数据，可直接注入 upload_service 缓存。
+生成示例数据 — 充电负荷 + 光伏
+充电负荷数据从真实训练数据 dataset_selected_features_test.csv 复制，
+避免模拟数据分布偏差导致预测为平的问题。
 """
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+import os
+import sys
+
+# ============================================================
+# 路径配置
+# ============================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DATA_DIR = os.path.join(BASE_DIR, "sample_data")
+
+CHARGING_SRC = os.path.join(ROOT_DIR, "Data", "dataset_selected_features_test.csv")
+CHARGING_OUT = os.path.join(DATA_DIR, "charging_load_sample.csv")
+SOLAR_OUT = os.path.join(DATA_DIR, "solar_pv_sample.csv")
 
 
-def _get_default_end():
-    """默认结束日期为今天"""
-    return datetime.now().strftime("%Y-%m-%d")
-
-
-def generate_charging_sample(start: str = "2026-03-01", end: str = None) -> pd.DataFrame:
+def generate_solar_data(days: int = 60) -> pd.DataFrame:
     """
-    生成模拟充电负荷数据。
-
-    参数
-    ----
-    start : str  起始日期 (包含)
-    end   : str  结束日期 (包含), 默认为今天
-
-    返回
-    ----
-    pd.DataFrame  列: timestamp, load_kw
+    生成光伏模拟数据。
+    日照遵循日周期正弦波（6:00–18:00 有日照），叠加随机噪声。
+    列名与 upload_service.py 的 SOLAR_REQUIRED_COLS / SOLAR_RADIATION_COLS 一致。
     """
-    if end is None:
-        end = _get_default_end()
+    steps = days * 96  # 15 分钟步长
+    datetimes = pd.date_range(
+        start="2026-03-01 00:00:00",
+        periods=steps,
+        freq="15min",
+        tz=None,
+    )
 
-    freq = "15min"
-    ts_range = pd.date_range(start=start, end=end + " 23:45:00", freq=freq)
+    np.random.seed(42)
+    hour_of_day = datetimes.hour + datetimes.minute / 60.0
 
-    # ---- 日负荷模式 (kW) ----
-    # 每小时基准负荷，反映典型充电站日规律
-    hourly_base = {
-        0: 300,  1: 250,  2: 200,  3: 180,  4: 170,  5: 160,
-        6: 200,  7: 400,  8: 700,  9: 850,  10: 900, 11: 880,
-        12: 820, 13: 780, 14: 800, 15: 830, 16: 880, 17: 950,
-        18: 1000, 19: 920, 20: 780, 21: 650, 22: 500, 23: 400,
-    }
+    # 日照强度：6–18 点为半正弦波，夜间为 0
+    sunrise, sunset = 6, 18
+    sun_mask = (hour_of_day >= sunrise) & (hour_of_day <= sunset)
+    intensity = np.zeros(steps)
+    intensity[sun_mask] = (
+        np.sin(np.pi * (hour_of_day[sun_mask] - sunrise) / (sunset - sunrise)) ** 0.8
+    )
 
-    # 季节系数：3月=0.85, 4月=0.92, 5月=1.0
-    def seasonal(hour_ts):
-        m = hour_ts.month
-        if m == 3:
-            return 0.85
-        elif m == 4:
-            return 0.92
-        else:
-            return 1.0
+    # 叠加天气噪声 + 小幅趋势
+    base_power = 500 * intensity  # 峰值 500 kW
+    noise = np.random.normal(0, 20, steps)
+    trend = 0.02 * np.arange(steps)  # 轻微上升趋势
+    power = np.clip(base_power + noise + trend, 0, None)
 
-    # 工作日系数：工作日=1.0, 周末=0.65
-    def weekday_factor(hour_ts):
-        if hour_ts.weekday() >= 5:
-            return 0.65
-        return 1.0
+    # 辐射列 (模拟)
+    shortwave = 800 * intensity + np.random.normal(0, 30, steps)
+    shortwave = np.clip(shortwave, 0, None)
 
-    loads = []
-    rng = np.random.RandomState(42)
-    for ts in ts_range:
-        base = hourly_base.get(ts.hour, 500)
-        # 15分钟内微调
-        minute_adjust = 1.0 + 0.05 * np.sin(2 * np.pi * ts.minute / 60)
-        seasonal_f = seasonal(ts)
-        wd_f = weekday_factor(ts)
-        noise = rng.normal(0, 40)
-        load = base * minute_adjust * seasonal_f * wd_f + noise
-        load = max(load, 50)  # 下限
-        loads.append(round(load, 2))
+    direct_radiation = 600 * intensity + np.random.normal(0, 25, steps)
+    direct_radiation = np.clip(direct_radiation, 0, None)
+
+    diffuse_radiation = 200 * intensity + np.random.normal(0, 15, steps)
+    diffuse_radiation = np.clip(diffuse_radiation, 0, None)
+
+    dni = 700 * intensity + np.random.normal(0, 20, steps)
+    dni = np.clip(dni, 0, None)
 
     df = pd.DataFrame({
-        "timestamp": ts_range,
-        "load_kw": loads,
+        "datetime": datetimes,
+        "power": power.round(2),
+        "shortwave_radiation (W/m2)": shortwave.round(1),
+        "direct_radiation (W/m2)": direct_radiation.round(1),
+        "diffuse_radiation (W/m2)": diffuse_radiation.round(1),
+        "direct_normal_irradiance (W/m2)": dni.round(1),
     })
     return df
 
 
-def generate_solar_sample(start: str = "2026-03-01", end: str = None) -> pd.DataFrame:
+def generate_charging_data_from_real(total_days: int = 60) -> pd.DataFrame:
     """
-    生成模拟光伏数据。
-
-    参数
-    ----
-    start : str  起始日期 (包含)
-    end   : str  结束日期 (包含), 默认为今天
-
-    返回
-    ----
-    pd.DataFrame  列: datetime, power, shortwave_radiation (W/m2)
+    从真实训练数据中提取逐日负荷模板，循环复制生成充电负荷数据。
+    保留真实 load_kw 的日周期模式（900~2400 kW），避免预测为平。
     """
-    if end is None:
-        end = _get_default_end()
+    # ---- 1. 读取训练数据 ----
+    if not os.path.exists(CHARGING_SRC):
+        print(f"[ERROR] 训练数据不存在: {CHARGING_SRC}")
+        sys.exit(1)
 
-    freq = "15min"
-    ts_range = pd.date_range(start=start, end=end + " 23:45:00", freq=freq)
+    df_src = pd.read_csv(CHARGING_SRC, parse_dates=["timestamp"])
 
-    # 季节系数 (3月 → 5月辐照度逐渐增强)
-    def seasonal_radiation(ts):
-        m = ts.month
-        # 3月: 0.65, 4月: 0.82, 5月: 1.0
-        if m == 3:
-            return 0.65
-        elif m == 4:
-            return 0.82
-        else:
-            return 1.0
+    # ---- 2. 抽取日模板 ----
+    # 直接按日期分组（不筛选 price，用全量数据保留日负荷模式）
+    df_src["date"] = df_src["timestamp"].dt.date
+    daily_groups = df_src.groupby("date")
 
-    powers = []
-    radiations = []
-    rng = np.random.RandomState(42)
-    for ts in ts_range:
-        hour = ts.hour + ts.minute / 60.0
+    templates = []
+    for date, group in daily_groups:
+        if len(group) >= 80:  # 至少 80 步才视为完整天
+            # 取 load_kw 时序，不足 96 步则用最后一个值填充
+            vals = group["load_kw"].values[:96]
+            if len(vals) < 96:
+                pad = np.full(96 - len(vals), vals[-1])
+                vals = np.concatenate([vals, pad])
+            templates.append(vals)
 
-        # 光伏仅在 6:00 ~ 18:00 有出力
-        if 6 <= hour <= 18:
-            # 中午峰值曲线
-            noon_offset = abs(hour - 12.0) / 6.0  # 0 (中午) → 1 (6点/18点)
-            shape = max(0, 1 - noon_offset ** 1.5)  # 钟形曲线
-            peak_power = 500  # kW 峰值
-            radiation_peak = 800  # W/m² 峰值
+    if not templates:
+        print("[ERROR] 训练数据中没有找到完整的一天数据")
+        sys.exit(1)
 
-            # 模拟云量波动
-            cloud = rng.uniform(0, 0.5)  # 0~0.5 随机云量衰减
-            seasonal_f = seasonal_radiation(ts)
-            noise = rng.normal(0, 10)
+    print(f"[INFO] 从训练数据中提取了 {len(templates)} 个日模板")
 
-            power = peak_power * shape * seasonal_f * (1 - cloud) + noise
-            power = max(power, 0)
-            radiation = radiation_peak * shape * seasonal_f * (1 - cloud) + noise * 0.5
-            radiation = max(radiation, 0)
-        else:
-            power = 0.0
-            radiation = 0.0
+    # ---- 3. 循环复制生成数据 ----
+    steps = total_days * 96
+    timestamps = pd.date_range(
+        start="2026-03-01 00:00:00",
+        periods=steps,
+        freq="15min",
+        tz=None,
+    )
 
-        powers.append(round(power, 2))
-        radiations.append(round(radiation, 2))
+    load_kw = np.zeros(steps)
+    np.random.seed(123)
+
+    for i in range(total_days):
+        day_start = i * 96
+        day_end = day_start + 96
+        template = templates[i % len(templates)]
+
+        # 加微小噪声（标准差 ~ 负荷均值的 1%），避免完全重复
+        noise_std = max(np.mean(template) * 0.01, 5.0)
+        noise = np.random.normal(0, noise_std, 96)
+        load_kw[day_start:day_end] = np.clip(template + noise, 0, None)
+
+    # price 全部设为 0.25（与训练数据一致）
+    price = np.full(steps, 0.25)
 
     df = pd.DataFrame({
-        "datetime": ts_range,
-        "power": powers,
-        "shortwave_radiation (W/m2)": radiations,
+        "timestamp": timestamps,
+        "price": price,
+        "load_kw": load_kw.round(2),
     })
-
-    # 添加其他辐射列（填充 0，满足 upload_service 验证）
-    df["direct_radiation (W/m2)"] = (np.array(radiations) * 0.7).round(2)
-    df["diffuse_radiation (W/m2)"] = (np.array(radiations) * 0.3).round(2)
-    df["direct_normal_irradiance (W/m2)"] = (np.array(radiations) * 0.65).round(2)
-
     return df
+
+
+def main():
+    print("=" * 60)
+    print("生成示例数据...")
+    print("=" * 60)
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    # ---- 光伏数据 ----
+    print("\n[1/2] 生成光伏数据...")
+    df_solar = generate_solar_data(days=60)
+    df_solar.to_csv(SOLAR_OUT, index=False)
+    print(f"  -> 保存到: {SOLAR_OUT}")
+    print(f"     行数: {len(df_solar)}, 列: {list(df_solar.columns)}")
+
+    # ---- 充电负荷数据 (从真实数据复制) ----
+    print("\n[2/2] 生成充电负荷数据 (基于真实训练数据)...")
+    df_charging = generate_charging_data_from_real(total_days=60)
+    df_charging.to_csv(CHARGING_OUT, index=False)
+    print(f"  -> 保存到: {CHARGING_OUT}")
+    print(f"     行数: {len(df_charging)}, 列: {list(df_charging.columns)}")
+    print(f"     load_kw 范围: {df_charging['load_kw'].min():.0f} ~ {df_charging['load_kw'].max():.0f} kW")
+    print(f"     load_kw 均值: {df_charging['load_kw'].mean():.0f} kW")
+    print(f"     price 唯一值: {df_charging['price'].unique().tolist()}")
+
+    print("\n" + "=" * 60)
+    print("完成！请重启 app.py 并重新上传数据。")
+    print("=" * 60)
 
 
 def inject_sample_data():
     """
-    生成并注入示例数据到 upload_service 缓存。
-
-    返回
-    ----
-    tuple  (charging_df, solar_df)
+    读取已生成的示例 CSV 文件，返回 (充电负荷DataFrame, 光伏DataFrame)。
+    供 app.py 在启动时自动注入示例数据。
     """
-    end_date = _get_default_end()
+    if not os.path.exists(CHARGING_OUT) or not os.path.exists(SOLAR_OUT):
+        print("[WARN] 示例数据文件不存在，请先运行 generate_sample_data.py")
+        return None, None
 
-    print(f"[示例数据] 生成 2026-03-01 ~ {end_date} 充电数据...")
-    charging_df = generate_charging_sample(end=end_date)
-    print(f"  → {len(charging_df)} 行")
-
-    print(f"[示例数据] 生成 2026-03-01 ~ {end_date} 光伏数据...")
-    solar_df = generate_solar_sample(end=end_date)
-    print(f"  → {len(solar_df)} 行")
-
-    return charging_df, solar_df
+    df_charging = pd.read_csv(CHARGING_OUT, parse_dates=["timestamp"])
+    df_solar = pd.read_csv(SOLAR_OUT, parse_dates=["datetime"])
+    print(f"[INFO] 注入示例数据: 充电 {len(df_charging)} 行, 光伏 {len(df_solar)} 行")
+    return df_charging, df_solar
 
 
-# ====== 直接运行测试 ======
 if __name__ == "__main__":
-    c, s = inject_sample_data()
-    print("\n充电数据预览:")
-    print(c.head(10))
-    print(f"\n光伏数据预览:")
-    print(s.head(10))
-    print(f"\n充电: {c['timestamp'].min()} ~ {c['timestamp'].max()}")
-    print(f"光伏: {s['datetime'].min()} ~ {s['datetime'].max()}")
+    main()

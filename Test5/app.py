@@ -37,7 +37,11 @@ from config import (
 from data_service import (
     get_recent_charging_data, get_recent_solar_data,
     create_prediction_chart, create_summary_chart,
-    create_charging_error_chart, create_solar_error_chart,
+    run_backtest_charging, run_backtest_solar,
+    build_charging_error_distribution_chart,
+    build_charging_error_by_hour_chart,
+    build_solar_error_distribution_chart,
+    build_solar_error_by_hour_chart,
     get_charging_model_info, get_solar_model_info,
     get_dataset_overview, get_available_dates,
     plot_daily_load_curves, get_correlation_chart,
@@ -45,9 +49,10 @@ from data_service import (
 )
 
 from prediction_service import (
+    run_prediction, generate_strategy,
     predict_solar, predict_charging,
     save_prediction_result, get_last_prediction,
-    generate_strategy, get_combined_prediction,
+    get_combined_prediction,
 )
 
 from weather_service import (
@@ -89,32 +94,17 @@ _last_charging_mode: str = ""
 _last_charging_result: dict = {}
 
 def build_prediction_tab():
-    """构建预测核心 Tab (v3: 充电负荷改为 Input-Driven 三模式)"""
+    """构建预测核心 Tab (v4: 统一交互 - 一步选择 + 一键执行联合预测)"""
     gr.Markdown(
         """
         ## 🎯 联合预测引擎
         
-        **光伏预测**: 基于实时同步数据自动预测 (LSTM + GAN)  
-        **充电负荷**: 输入当前电价和负荷 → 选择预测模式 → 模型迭代预测
+        统一的预测步数选择和充电参数输入，一键同时执行光伏和充电负荷预测。
         """
     )
 
-    # ---- 光伏预测 (保持不变) ----
-    gr.Markdown("### ☀️ 光伏预测")
-    with gr.Row():
-        solar_steps_dropdown = gr.Dropdown(
-            choices=["15分钟 (1步)", "1小时 (4步)", "24小时 (96步)"],
-            value="1小时 (4步)",
-            label="光伏预测步数",
-            scale=2,
-        )
-        btn_solar_predict = gr.Button("🔆 执行光伏预测", variant="primary", scale=1)
-
-    solar_result_plot = gr.Plot(label="光伏预测曲线", value=None)
-
-    # ---- 充电负荷预测 (新: Input-Driven 三模式) ----
-    gr.Markdown("### 🔋 充电负荷预测 (三模式)")
-
+    # ---- 充电参数输入 ----
+    gr.Markdown("### 🔋 充电参数")
     with gr.Row():
         price_input = gr.Number(
             label="当前充电电价 (元/kWh)",
@@ -131,104 +121,82 @@ def build_prediction_tab():
             step=1.0,
         )
 
+    # ---- 统一预测控制 ----
+    gr.Markdown("### 🎯 预测控制")
     with gr.Row():
-        charging_mode = gr.Radio(
-            choices=[
-                "⚡ 15min 单步预测",
-                "🕐 1小时预测 (4步)",
-                "📅 24小时预测 (96步)",
-            ],
-            value="🕐 1小时预测 (4步)",
-            label="预测模式",
+        steps_dropdown = gr.Dropdown(
+            choices=["15分钟 (1步)", "1小时 (4步)", "24小时 (96步)"],
+            value="1小时 (4步)",
+            label="预测步数",
+            scale=3,
         )
-        btn_charging_predict = gr.Button("🔋 执行充电预测", variant="primary", scale=2)
+        btn_predict = gr.Button("🚀 执行联合预测", variant="primary", scale=2)
 
-    charging_result_plot = gr.Plot(label="充电负荷预测曲线", value=None)
+    # ---- 状态指示 ----
+    status_html_base = gr.HTML("<span style='color:#888;'>⏳ 等待执行预测</span>")
+    status_html = gr.HTML("")
 
-    # ---- 联合预测仪表板 ----
+    # ---- 联合预测可视化 ----
     gr.Markdown("---")
-    gr.Markdown("### 📊 联合预测结果 (光伏 vs 充电)")
+    gr.Markdown("### 📊 光伏 + 充电 联合预测")
 
     with gr.Row():
-        joint_plot = gr.Plot(label="光伏 + 充电 联合预测", value=None)
+        joint_plot = gr.Plot(label="预测对比曲线", value=None)
         summary_plot = gr.Plot(label="关键指标摘要", value=None)
 
-    with gr.Row():
-        status_html = gr.HTML("")
-        metrics_html = gr.HTML("")
+    metrics_html = gr.HTML("")
 
-    # ---- 事件绑定 ----
-    btn_solar_predict.click(
-        fn=_do_solar_prediction_ui,
-        inputs=[solar_steps_dropdown],
-        outputs=[solar_result_plot, status_html],
-    )
-
-    btn_charging_predict.click(
-        fn=_do_charging_prediction_ui,
-        inputs=[price_input, load_input, charging_mode],
-        outputs=[charging_result_plot, status_html],
-    )
-
-    # 当光伏或充电预测完成后，自动刷新联合视图
-    solar_result_plot.change(
+    # ---- 事件绑定 (一键同时执行光伏 + 充电预测) ----
+    btn_predict.click(
+        fn=_do_joint_prediction,
+        inputs=[steps_dropdown, price_input, load_input],
+        outputs=[status_html],
+    ).then(
         fn=_refresh_joint_view,
-        inputs=[solar_steps_dropdown],
+        inputs=[steps_dropdown],
         outputs=[joint_plot, summary_plot, metrics_html],
-        trigger_mode="always_last",
-    )
-    charging_result_plot.change(
-        fn=_refresh_joint_view,
-        inputs=[solar_steps_dropdown],
-        outputs=[joint_plot, summary_plot, metrics_html],
-        trigger_mode="always_last",
     )
 
-    return (solar_steps_dropdown, btn_solar_predict, solar_result_plot,
-            price_input, load_input, charging_mode, btn_charging_predict,
-            charging_result_plot, joint_plot, summary_plot, status_html, metrics_html)
+    return (steps_dropdown, btn_predict,
+            price_input, load_input,
+            joint_plot, summary_plot, status_html, metrics_html)
 
 
-def _do_solar_prediction_ui(steps_label: str):
-    """执行光伏预测并返回图表"""
+def _do_joint_prediction(steps_label: str, price: float, load_kw: float):
+    """统一执行光伏 + 充电预测"""
+    global _last_charging_input, _last_charging_result
+
     step_map = {"15分钟 (1步)": 1, "1小时 (4步)": 4, "24小时 (96步)": 96}
     n_steps = step_map.get(steps_label, 4)
 
-    try:
-        result = predict_solar(n_steps=n_steps)
-        if result is None:
-            return _empty_chart("光伏预测失败: 模型未加载"), _status_html("solar", False)
-        save_prediction_result("solar", result)
-        fig = _build_solar_only_chart(result)
-        return fig, _status_html("solar", True)
-    except Exception as e:
-        return _empty_chart(f"光伏预测出错: {e}"), _status_html("solar", False)
-
-
-def _do_charging_prediction_ui(price: float, load_kw: float, mode: str):
-    """执行充电预测 (Input-Driven 模式) 并返回图表"""
-    global _last_charging_input, _last_charging_mode, _last_charging_result
-
-    mode_map = {
-        "⚡ 15min 单步预测": 1,
-        "🕐 1小时预测 (4步)": 4,
-        "📅 24小时预测 (96步)": 96,
-    }
-    n_steps = mode_map.get(mode, 4)
-
     _last_charging_input = {"price": price, "load_kw": load_kw}
-    _last_charging_mode = mode
 
+    status_parts = []
+
+    # 执行光伏预测
     try:
-        result = predict_charging(price=price, load=load_kw, n_steps=n_steps)
-        if result is None:
-            return _empty_chart("充电预测失败: 模型未加载或数据不足"), _status_html("charging", False)
-        _last_charging_result = result
-        save_prediction_result("charging", result)
-        fig = _build_charging_only_chart(result)
-        return fig, _status_html("charging", True)
+        solar_result = predict_solar(n_steps=n_steps)
+        if solar_result is None:
+            status_parts.append("☀️ 光伏: ❌ 模型未加载")
+        else:
+            save_prediction_result("solar", solar_result)
+            status_parts.append("☀️ 光伏: ✅ 完成")
     except Exception as e:
-        return _empty_chart(f"充电预测出错: {e}"), _status_html("charging", False)
+        status_parts.append(f"☀️ 光伏: ❌ {e}")
+
+    # 执行充电预测
+    try:
+        charging_result = predict_charging(price=price, load=load_kw, n_steps=n_steps)
+        if charging_result is None:
+            status_parts.append("🔋 充电: ❌ 模型未加载")
+        else:
+            _last_charging_result = charging_result
+            save_prediction_result("charging", charging_result)
+            status_parts.append("🔋 充电: ✅ 完成")
+    except Exception as e:
+        status_parts.append(f"🔋 充电: ❌ {e}")
+
+    return f"<span>{'&nbsp;' * 8} </span>".join(status_parts)
 
 
 def _refresh_joint_view(steps_label: str):
@@ -259,7 +227,7 @@ def _refresh_joint_view(steps_label: str):
         n = len(combined["solar"])
         combined["total_solar"] = sum(combined["solar"]) * 0.25
         combined["total_load"] = 0
-        combined["solar_peak"] = max(combined["solar"]) if combined["solar"] else 0
+        combined["solar_peak"] = max(combined["solar"]) if len(combined["solar"]) > 0 else 0
         combined["solar_peak_time"] = None
         combined["load_peak"] = 0
         combined["green_ratio"] = 100.0
@@ -275,7 +243,7 @@ def _refresh_joint_view(steps_label: str):
         combined["total_load"] = sum(combined["load_mean"]) * 0.25
         combined["solar_peak"] = 0
         combined["solar_peak_time"] = None
-        combined["load_peak"] = max(combined["load_mean"]) if combined["load_mean"] else 0
+        combined["load_peak"] = max(combined["load_mean"]) if len(combined["load_mean"]) > 0 else 0
         combined["green_ratio"] = 0
         joint_fig = create_prediction_chart(combined)
         summary_fig = create_summary_chart(combined)
@@ -510,33 +478,71 @@ def _generate_strategy_ui():
 
 
 # ============================================================
-# Tab 5: 误差分析 (使用新 data_service 的统一图表函数)
+# Tab 5: 误差分析 (参照 Test4 设计)
 # ============================================================
 def build_error_tab():
-    """构建误差分析 Tab (v3: 使用统一图表函数)"""
+    """构建误差分析 Tab (v3: 参照 Test4 设计)"""
     btn_run_eval = gr.Button("🔍 运行评估", variant="primary")
 
+    # ---- 充电模型 ----
     gr.Markdown("## ⚡ 充电模型 (TCN-Attention-LSTM)")
-    charging_info = gr.Markdown(value=get_charging_model_info())
-    charging_error_chart = gr.Plot(label="充电误差分析")
+    gr.Markdown("### 📊 充电模型回测")
+    charging_backtest_chart = gr.Plot(label="充电 — 真实值 vs 预测值")
+    charging_backtest_summary = gr.Markdown("")
 
+    gr.Markdown("### 📈 充电残差分布分析")
+    with gr.Row():
+        charging_error_dist_chart = gr.Plot(label="充电残差分布直方图")
+        charging_error_hour_chart = gr.Plot(label="充电按小时误差")
+
+    # ---- 光伏模型 ----
     gr.Markdown("## ☀️ 光伏模型 (LSTM + GAN)")
-    solar_info = gr.Markdown(value=get_solar_model_info())
-    solar_error_chart = gr.Plot(label="光伏误差分析")
+    gr.Markdown("### 📊 光伏模型回测")
+    solar_backtest_chart = gr.Plot(label="光伏 — 真实值 vs 预测值")
+    solar_backtest_summary = gr.Markdown("")
+
+    gr.Markdown("### 📈 光伏残差分布分析")
+    with gr.Row():
+        solar_error_dist_chart = gr.Plot(label="光伏残差分布直方图")
+        solar_error_hour_chart = gr.Plot(label="光伏按小时误差")
+
+    gr.Markdown("### 📋 光伏模型信息")
+    solar_model_info = gr.Markdown("")
 
     btn_run_eval.click(
         fn=_run_evaluation,
         inputs=[],
-        outputs=[charging_error_chart, solar_error_chart],
+        outputs=[
+            charging_backtest_chart, charging_backtest_summary,
+            charging_error_dist_chart, charging_error_hour_chart,
+            solar_backtest_chart, solar_backtest_summary,
+            solar_error_dist_chart, solar_error_hour_chart,
+            solar_model_info,
+        ],
     )
     return btn_run_eval
 
 
 def _run_evaluation():
-    """执行误差分析"""
-    charging_fig = create_charging_error_chart()
-    solar_fig = create_solar_error_chart()
-    return charging_fig, solar_fig
+    """执行误差分析（充电 + 光伏）"""
+    # --- 充电模型 ---
+    charging_backtest_fig, charging_backtest_msg = run_backtest_charging()
+    charging_error_dist_fig = build_charging_error_distribution_chart()
+    charging_error_hour_fig = build_charging_error_by_hour_chart()
+
+    # --- 光伏模型 ---
+    solar_backtest_fig, solar_backtest_msg = run_backtest_solar()
+    solar_error_dist_fig = build_solar_error_distribution_chart()
+    solar_error_hour_fig = build_solar_error_by_hour_chart()
+    solar_info = get_solar_model_info()
+
+    return (
+        charging_backtest_fig, charging_backtest_msg,
+        charging_error_dist_fig, charging_error_hour_fig,
+        solar_backtest_fig, solar_backtest_msg,
+        solar_error_dist_fig, solar_error_hour_fig,
+        solar_info,
+    )
 
 
 # ============================================================

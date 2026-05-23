@@ -234,288 +234,485 @@ def create_summary_chart(result):
 # ============================================================
 # 误差分析图表 (基于内置数据)
 # ============================================================
-def create_charging_error_chart():
-    """充电模型误差分析 (基于内置测试集)"""
-    if not PLOTLY_AVAILABLE:
-        return None
+# ============================================================
+# 误差分析 — 充电模型回测 (真实 TCN-Attention-LSTM)
+# ============================================================
+def _charging_sliding_backtest():
+    """充电滑动窗口回测内部函数，返回 (y_true, y_pred, hours) 或 (None, None, None)"""
     try:
         import pickle
         import torch
-        import torch.nn as nn
+    except ImportError:
+        return None, None, None
 
-        # 加载模型
-        from config import CHARGING_MODEL_PTH
-        from prediction_service import HybridModel, _load_charging_scalers
+    from config import CHARGING_MODEL_PTH
+    from prediction_service import HybridModel, _load_charging_scalers
 
-        if not os.path.exists(CHARGING_MODEL_PTH):
-            return _error_fallback("充电模型权重文件不存在")
+    if not os.path.exists(CHARGING_MODEL_PTH):
+        return None, None, None
 
-        # 加载数据
-        test_path = os.path.join(ROOT_DIR, "Data", "dataset_selected_features_test.csv")
-        if not os.path.exists(test_path):
-            return _error_fallback("充电测试数据不存在")
+    test_path = os.path.join(ROOT_DIR, "Data", "dataset_selected_features_test.csv")
+    if not os.path.exists(test_path):
+        return None, None, None
 
-        df_test = pd.read_csv(test_path, parse_dates=["timestamp"])
-        df_test.sort_values("timestamp", inplace=True)
+    df_test = pd.read_csv(test_path, parse_dates=["timestamp"])
+    df_test.sort_values("timestamp", inplace=True)
 
-        scaler_X, scaler_y = _load_charging_scalers()
-        if scaler_X is None or scaler_y is None:
-            return _error_fallback("充电 scaler 文件不存在")
+    scaler_X, scaler_y = _load_charging_scalers()
+    if scaler_X is None or scaler_y is None:
+        return None, None, None
 
-        # 特征列 (与训练一致)
-        feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
-        target_col = "load_kw"
+    feature_cols = ["price", "lag_1", "lag_96", "lag_672", "rolling_std_4", "rolling_mean_4"]
+    target_col = "load_kw"
 
-        # 加载模型
-        state = torch.load(CHARGING_MODEL_PTH, map_location="cpu", weights_only=True)
-        for k in state:
-            if "lstm.weight_ih_l0" in k:
-                hidden_dim = state[k].shape[0] // 4
-                break
-        else:
-            hidden_dim = 121
+    state = torch.load(CHARGING_MODEL_PTH, map_location="cpu", weights_only=True)
+    for k in state:
+        if "lstm.weight_ih_l0" in k:
+            hidden_dim = state[k].shape[0] // 4
+            break
+    else:
+        hidden_dim = 121
 
-        model = HybridModel(input_dim=6, hidden_dim=hidden_dim, output_dim=1)
-        model.load_state_dict(state)
-        model.eval()
+    model = HybridModel(input_dim=6, hidden_dim=hidden_dim, output_dim=1)
+    model.load_state_dict(state)
+    model.eval()
 
-        # 构建测试序列
-        seq_len = 96  # charging lookback
-        X_test = df_test[feature_cols].values.astype(np.float32)
-        y_test = df_test[target_col].values.astype(np.float32)
+    seq_len = 96
+    X_test = df_test[feature_cols].values.astype(np.float32)
+    y_test = df_test[target_col].values.astype(np.float32)
+    X_scaled = scaler_X.transform(X_test)
 
-        X_scaled = scaler_X.transform(X_test)
+    preds = []
+    actuals = []
+    hours = []
 
-        preds = []
-        actuals = []
-        hours = []
+    for i in range(seq_len, len(X_scaled)):
+        inp = torch.FloatTensor(X_scaled[i - seq_len : i]).unsqueeze(0)
+        with torch.no_grad():
+            pred_scaled = model(inp).item()
+        pred_real = scaler_y.inverse_transform([[pred_scaled]])[0, 0]
+        preds.append(float(pred_real))
+        actuals.append(float(y_test[i]))
+        try:
+            ts = df_test["timestamp"].iloc[i]
+            hours.append(ts.hour)
+        except Exception:
+            hours.append(0)
 
-        for i in range(seq_len, len(X_scaled)):
-            inp = torch.FloatTensor(X_scaled[i - seq_len : i]).unsqueeze(0)
-            with torch.no_grad():
-                pred_scaled = model(inp).item()
-            pred_real = scaler_y.inverse_transform([[pred_scaled]])[0, 0]
-            preds.append(float(pred_real))
-            actuals.append(float(y_test[i]))
-            try:
-                ts = df_test["timestamp"].iloc[i]
-                hours.append(ts.hour)
-            except Exception:
-                hours.append(0)
+    if len(preds) < 10:
+        return None, None, None
 
-        if len(preds) < 10:
-            return _error_fallback("测试样本不足")
-
-        preds = np.array(preds)
-        actuals = np.array(actuals)
-        errors = np.abs(preds - actuals)
-        mae_total = np.mean(errors)
-        rmse_total = np.sqrt(np.mean((preds - actuals) ** 2))
-
-        # 按小时汇总
-        df_err = pd.DataFrame({"hour": hours, "abs_error": errors, "sq_error": (preds - actuals) ** 2})
-        hourly = df_err.groupby("hour").agg(MAE=("abs_error", "mean"), RMSE=("sq_error", lambda x: np.sqrt(np.mean(x)))).reset_index()
-
-        # 图表
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                "真实值 vs 预测值",
-                "残差分布",
-                f"按小时误差 (MAE={mae_total:.1f}kW, RMSE={rmse_total:.1f}kW)",
-                "评估指标",
-            ),
-            specs=[[{}, {}], [{"colspan": 1}, {"type": "indicator"}]],
-            vertical_spacing=0.12,
-        )
-
-        # Scatter
-        fig.add_trace(
-            go.Scatter(x=actuals[:200], y=preds[:200], mode="markers",
-                       marker=dict(size=4, opacity=0.5, color="#2196f3"),
-                       name="预测 vs 真实"),
-            row=1, col=1,
-        )
-        max_val = max(actuals[:200].max(), preds[:200].max())
-        fig.add_trace(
-            go.Scatter(x=[0, max_val], y=[0, max_val], mode="lines",
-                       line=dict(dash="dash", color="gray"),
-                       name="理想线"),
-            row=1, col=1,
-        )
-
-        # 残差
-        residuals = preds - actuals
-        fig.add_trace(
-            go.Histogram(x=residuals, nbinsx=50, marker_color="#f44336",
-                         opacity=0.7, name="残差"),
-            row=1, col=2,
-        )
-
-        # 按小时
-        fig.add_trace(
-            go.Bar(x=hourly["hour"], y=hourly["MAE"],
-                   name="MAE (kW)", marker_color="#4caf50", opacity=0.7),
-            row=2, col=1,
-        )
-        fig.add_trace(
-            go.Scatter(x=hourly["hour"], y=hourly["RMSE"],
-                       mode="lines+markers", name="RMSE (kW)",
-                       line=dict(color="#f44336", width=2), marker=dict(size=6)),
-            row=2, col=1,
-        )
-
-        fig.update_layout(
-            height=650,
-            template="plotly_white",
-            margin=dict(l=40, r=40, t=50, b=40),
-            showlegend=False,
-        )
-        fig.update_xaxes(title_text="真实值 (kW)", row=1, col=1)
-        fig.update_yaxes(title_text="预测值 (kW)", row=1, col=1)
-        fig.update_xaxes(title_text="残差 (kW)", row=1, col=2)
-        fig.update_yaxes(title_text="频次", row=1, col=2)
-        fig.update_xaxes(title_text="小时", row=2, col=1)
-        fig.update_yaxes(title_text="误差 (kW)", row=2, col=1)
-
-        return fig
-
-    except Exception as e:
-        return _error_fallback(f"充电误差分析失败: {e}")
+    return np.array(actuals), np.array(preds), np.array(hours)
 
 
-def create_solar_error_chart():
-    """光伏模型误差分析 (基于内置 aligned 数据)"""
+def run_backtest_charging():
+    """充电模型回测图：真实值 vs 预测值 + 残差分布"""
     if not PLOTLY_AVAILABLE:
-        return None
+        return go.Figure(), "⚠️ Plotly 不可用"
+
+    y_true, y_pred, _ = _charging_sliding_backtest()
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="充电模型或数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 充电模型回测不可用"
+
+    residuals = y_true - y_pred
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    mae = np.mean(np.abs(residuals))
+    nonzero = np.abs(y_true) > 10
+    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+    n_show = min(300, len(y_true))
+    idx = np.linspace(0, len(y_true) - 1, n_show).astype(int)
+    t_show = y_true[idx]
+    p_show = y_pred[idx]
+    r_show = residuals[idx]
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.55, 0.45],
+        subplot_titles=("真实值 vs 预测值 (TCN-Attention-LSTM 模型)", "残差分布 (真实 - 预测)"),
+        vertical_spacing=0.12,
+    )
+    fig.add_trace(go.Scatter(
+        x=list(range(len(t_show))), y=t_show,
+        mode="lines", name="真实值",
+        line=dict(color="#2196f3", width=2),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=list(range(len(p_show))), y=p_show,
+        mode="lines", name="预测值",
+        line=dict(color="#ff9800", width=1.5, dash="dot"),
+    ), row=1, col=1)
+
+    colors_res = ["#4caf50" if v >= 0 else "#f44336" for v in r_show]
+    fig.add_trace(go.Bar(
+        x=list(range(len(r_show))), y=r_show,
+        marker_color=colors_res, name="残差", opacity=0.6,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="#666", row=2, col=1)
+
+    fig.update_xaxes(title_text="样本序号", row=2, col=1)
+    fig.update_yaxes(title_text="负荷 (kW)", row=1, col=1)
+    fig.update_yaxes(title_text="残差 (kW)", row=2, col=1)
+    fig.update_layout(
+        height=550,
+        template="plotly_white",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+
+    summary = (
+        f"### 📊 充电回测指标 (n={len(y_true)})\n\n"
+        f"| 指标 | 值 |\n"
+        f"|------|----|\n"
+        f"| RMSE | **{rmse:.2f}** kW |\n"
+        f"| MAE  | **{mae:.2f}** kW |\n"
+        f"| MAPE | **{mape:.1f}%** (|load|>10kW) |\n"
+        f"| R²   | **{r2:.4f}** |\n"
+        f"\n> 使用真实 **TCN-Attention-LSTM** 模型滑动窗口滚动预测"
+    )
+
+    return fig, summary
+
+
+def build_charging_error_distribution_chart():
+    """充电残差分布直方图（带正态拟合）"""
+    if not PLOTLY_AVAILABLE:
+        return go.Figure()
+
+    y_true, y_pred, _ = _charging_sliding_backtest()
+    if y_true is None:
+        return _error_fallback("充电模型回测不可用")
+
+    residuals = y_true - y_pred
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=residuals,
+        nbinsx=50,
+        marker_color="#2196f3",
+        opacity=0.75,
+        name="充电残差",
+    ))
+    fig.add_vline(
+        x=0, line_dash="dash", line_color="#f44336", line_width=2,
+        annotation_text="0",
+    )
+
+    mu, sigma = np.mean(residuals), np.std(residuals)
+    x_span = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
+    y_pdf = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_span - mu) / sigma) ** 2)
+    bin_width = (residuals.max() - residuals.min()) / 50 if residuals.max() > residuals.min() else 1
+    y_scaled = y_pdf * len(residuals) * bin_width
+    fig.add_trace(go.Scatter(
+        x=x_span, y=y_scaled,
+        mode="lines",
+        name=f"正态拟合 (μ={mu:.1f}, σ={sigma:.1f})",
+        line=dict(color="#f44336", width=2, dash="dot"),
+    ))
+
+    fig.update_layout(
+        title="充电残差分布直方图 (TCN-Attention-LSTM)",
+        xaxis=dict(title="残差 (kW)"),
+        yaxis=dict(title="频次"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        bargap=0.05,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def build_charging_error_by_hour_chart():
+    """充电按小时分组的误差分析 (MAE & RMSE)"""
+    if not PLOTLY_AVAILABLE:
+        return go.Figure()
+
+    y_true, y_pred, hours = _charging_sliding_backtest()
+    if y_true is None:
+        return _error_fallback("充电模型回测不可用")
+
+    error_df = pd.DataFrame({
+        "hour": hours,
+        "abs_error": np.abs(y_true - y_pred),
+        "sq_error": (y_true - y_pred) ** 2,
+    })
+    hourly = error_df.groupby("hour").agg(
+        MAE=("abs_error", "mean"),
+        RMSE=("sq_error", lambda x: np.sqrt(x.mean())),
+        count=("sq_error", "count"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hourly["hour"], y=hourly["MAE"],
+        name="MAE (kW)",
+        marker_color="#2196f3",
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=hourly["hour"], y=hourly["RMSE"],
+        mode="lines+markers",
+        name="RMSE (kW)",
+        line=dict(color="#f44336", width=2),
+        marker=dict(size=6),
+    ))
+
+    fig.update_layout(
+        title="充电按小时误差分析 (TCN-Attention-LSTM, MAE & RMSE)",
+        xaxis=dict(title="小时", dtick=2),
+        yaxis=dict(title="误差 (kW)"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+# ============================================================
+# 误差分析 — 光伏模型回测 (LSTM + GAN)
+# ============================================================
+def _solar_sliding_backtest():
+    """光伏滑动窗口回测内部函数，返回 (y_true, y_pred, hours) 或 (None, None, None)"""
     try:
-        import joblib
         import torch
-        import torch.nn as nn
+    except ImportError:
+        return None, None, None
 
-        from config import SOLAR_MODEL_PTH
-        from prediction_service import LSTMPredictor, GeneratorWithFeatures, _load_solar_scaler, _load_aligned_df
+    from config import SOLAR_MODEL_PTH
+    from prediction_service import LSTMPredictor, GeneratorWithFeatures, _load_solar_scaler, _load_aligned_df
 
-        if not os.path.exists(SOLAR_MODEL_PTH):
-            return _error_fallback("光伏模型权重文件不存在")
+    if not os.path.exists(SOLAR_MODEL_PTH):
+        return None, None, None
 
-        df = _load_aligned_df()
-        if df is None:
-            return _error_fallback("aligned 数据不存在")
+    df = _load_aligned_df()
+    if df is None:
+        return None, None, None
 
-        scaler = _load_solar_scaler()
-        if scaler is None:
-            return _error_fallback("光伏 scaler 不存在")
+    scaler = _load_solar_scaler()
+    if scaler is None:
+        return None, None, None
 
-        feature_cols = [
-            "power", "hour_sin", "hour_cos",
-            "shortwave_radiation (W/m2)", "direct_radiation (W/m2)",
-            "diffuse_radiation (W/m2)", "direct_normal_irradiance (W/m2)"
-        ]
+    feature_cols = [
+        "power", "hour_sin", "hour_cos",
+        "shortwave_radiation (W/m2)", "direct_radiation (W/m2)",
+        "diffuse_radiation (W/m2)", "direct_normal_irradiance (W/m2)"
+    ]
 
-        # 加载模型
-        state = torch.load(SOLAR_MODEL_PTH, map_location="cpu", weights_only=True)
-        lstm = LSTMPredictor(input_size=7, hidden_size=128, num_layers=2, output_size=1, dropout=0.2)
-        model = GeneratorWithFeatures(lstm)
-        model.load_state_dict(state)
-        model.eval()
+    state = torch.load(SOLAR_MODEL_PTH, map_location="cpu", weights_only=True)
+    lstm = LSTMPredictor(input_size=7, hidden_size=128, num_layers=2, output_size=1, dropout=0.2)
+    model = GeneratorWithFeatures(lstm)
+    model.load_state_dict(state)
+    model.eval()
 
-        seq_len = 24  # solar lookback
-        X = df[feature_cols].values.astype(np.float32)
-        y = df["power"].values.astype(np.float32)
-        X_scaled = scaler.transform(X)
+    seq_len = 24
+    X = df[feature_cols].values.astype(np.float32)
+    y = df["power"].values.astype(np.float32)
+    X_scaled = scaler.transform(X)
 
-        preds = []
-        actuals = []
-        hours = []
+    preds = []
+    actuals = []
+    hours = []
 
-        for i in range(seq_len, len(X_scaled)):
-            inp = torch.FloatTensor(X_scaled[i - seq_len : i]).unsqueeze(0)
-            with torch.no_grad():
-                pred_scaled = model(inp).item()
-            pred_row = X_scaled[i - 1].copy()
-            pred_row[0] = pred_scaled
-            pred_real = scaler.inverse_transform(pred_row.reshape(1, -1))[0, 0]
-            preds.append(float(max(pred_real, 0)))
-            actuals.append(float(y[i]))
-            try:
-                ts = df["datetime"].iloc[i]
-                hours.append(ts.hour)
-            except Exception:
-                hours.append(0)
+    for i in range(seq_len, len(X_scaled)):
+        inp = torch.FloatTensor(X_scaled[i - seq_len : i]).unsqueeze(0)
+        with torch.no_grad():
+            pred_scaled = model(inp).item()
+        pred_row = X_scaled[i - 1].copy()
+        pred_row[0] = pred_scaled
+        pred_real = scaler.inverse_transform(pred_row.reshape(1, -1))[0, 0]
+        preds.append(float(max(pred_real, 0)))
+        actuals.append(float(y[i]))
+        try:
+            ts = df["datetime"].iloc[i]
+            hours.append(ts.hour)
+        except Exception:
+            hours.append(0)
 
-        if len(preds) < 10:
-            return _error_fallback("光伏测试样本不足")
+    if len(preds) < 10:
+        return None, None, None
 
-        preds = np.array(preds)
-        actuals = np.array(actuals)
-        errors = np.abs(preds - actuals)
-        mae_total = np.mean(errors)
-        rmse_total = np.sqrt(np.mean((preds - actuals) ** 2))
+    return np.array(actuals), np.array(preds), np.array(hours)
 
-        df_err = pd.DataFrame({"hour": hours, "abs_error": errors, "sq_error": (preds - actuals) ** 2})
-        hourly = df_err.groupby("hour").agg(MAE=("abs_error", "mean"), RMSE=("sq_error", lambda x: np.sqrt(np.mean(x)))).reset_index()
 
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                "真实值 vs 预测值",
-                "残差分布",
-                f"按小时误差 (MAE={mae_total:.1f}kW, RMSE={rmse_total:.1f}kW)",
-                "",
-            ),
-            vertical_spacing=0.12,
-        )
+def run_backtest_solar():
+    """光伏模型回测图：真实值 vs 预测值 + 残差分布"""
+    if not PLOTLY_AVAILABLE:
+        return go.Figure(), "⚠️ Plotly 不可用"
 
-        fig.add_trace(
-            go.Scatter(x=actuals[:200], y=preds[:200], mode="markers",
-                       marker=dict(size=4, opacity=0.5, color="#ff9800"),
-                       name="预测 vs 真实"),
-            row=1, col=1,
-        )
-        max_val = max(actuals[:200].max(), preds[:200].max())
-        fig.add_trace(
-            go.Scatter(x=[0, max_val], y=[0, max_val], mode="lines",
-                       line=dict(dash="dash", color="gray"), name="理想线"),
-            row=1, col=1,
-        )
+    y_true, y_pred, _ = _solar_sliding_backtest()
+    if y_true is None:
+        fig = go.Figure()
+        fig.add_annotation(text="光伏模型或数据不可用", showarrow=False, font=dict(size=14))
+        fig.update_layout(height=350, template="plotly_white")
+        return fig, "⚠️ 光伏模型回测不可用"
 
-        residuals = preds - actuals
-        fig.add_trace(
-            go.Histogram(x=residuals, nbinsx=50, marker_color="#f44336",
-                         opacity=0.7, name="残差"),
-            row=1, col=2,
-        )
+    residuals = y_true - y_pred
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    mae = np.mean(np.abs(residuals))
+    nonzero = np.abs(y_true) > 1
+    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
-        fig.add_trace(
-            go.Bar(x=hourly["hour"], y=hourly["MAE"],
-                   name="MAE (kW)", marker_color="#4caf50", opacity=0.7),
-            row=2, col=1,
-        )
-        fig.add_trace(
-            go.Scatter(x=hourly["hour"], y=hourly["RMSE"],
-                       mode="lines+markers", name="RMSE (kW)",
-                       line=dict(color="#f44336", width=2), marker=dict(size=6)),
-            row=2, col=1,
-        )
+    n_show = min(300, len(y_true))
+    idx = np.linspace(0, len(y_true) - 1, n_show).astype(int)
+    t_show = y_true[idx]
+    p_show = y_pred[idx]
+    r_show = residuals[idx]
 
-        fig.update_layout(
-            height=650,
-            template="plotly_white",
-            margin=dict(l=40, r=40, t=50, b=40),
-            showlegend=False,
-        )
-        fig.update_xaxes(title_text="真实值 (kW)", row=1, col=1)
-        fig.update_yaxes(title_text="预测值 (kW)", row=1, col=1)
-        fig.update_xaxes(title_text="残差 (kW)", row=1, col=2)
-        fig.update_yaxes(title_text="频次", row=1, col=2)
-        fig.update_xaxes(title_text="小时", row=2, col=1)
-        fig.update_yaxes(title_text="误差 (kW)", row=2, col=1)
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.55, 0.45],
+        subplot_titles=("真实值 vs 预测值 (LSTM + GAN 模型)", "残差分布 (真实 - 预测)"),
+        vertical_spacing=0.12,
+    )
+    fig.add_trace(go.Scatter(
+        x=list(range(len(t_show))), y=t_show,
+        mode="lines", name="真实值",
+        line=dict(color="#ff9800", width=2),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=list(range(len(p_show))), y=p_show,
+        mode="lines", name="预测值",
+        line=dict(color="#2196f3", width=1.5, dash="dot"),
+    ), row=1, col=1)
 
-        return fig
+    colors_res = ["#4caf50" if v >= 0 else "#f44336" for v in r_show]
+    fig.add_trace(go.Bar(
+        x=list(range(len(r_show))), y=r_show,
+        marker_color=colors_res, name="残差", opacity=0.6,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="#666", row=2, col=1)
 
-    except Exception as e:
-        return _error_fallback(f"光伏误差分析失败: {e}")
+    fig.update_xaxes(title_text="样本序号", row=2, col=1)
+    fig.update_yaxes(title_text="光伏功率 (kW)", row=1, col=1)
+    fig.update_yaxes(title_text="残差 (kW)", row=2, col=1)
+    fig.update_layout(
+        height=550,
+        template="plotly_white",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+
+    summary = (
+        f"### 📊 光伏回测指标 (n={len(y_true)})\n\n"
+        f"| 指标 | 值 |\n"
+        f"|------|----|\n"
+        f"| RMSE | **{rmse:.2f}** kW |\n"
+        f"| MAE  | **{mae:.2f}** kW |\n"
+        f"| MAPE | **{mape:.1f}%** (|power|>1kW) |\n"
+        f"| R²   | **{r2:.4f}** |\n"
+        f"\n> 使用真实 **LSTM + GAN** 模型滑动窗口滚动预测"
+    )
+
+    return fig, summary
+
+
+def build_solar_error_distribution_chart():
+    """光伏残差分布直方图（带正态拟合）"""
+    if not PLOTLY_AVAILABLE:
+        return go.Figure()
+
+    y_true, y_pred, _ = _solar_sliding_backtest()
+    if y_true is None:
+        return _error_fallback("光伏模型回测不可用")
+
+    residuals = y_true - y_pred
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=residuals,
+        nbinsx=50,
+        marker_color="#ff9800",
+        opacity=0.75,
+        name="光伏残差",
+    ))
+    fig.add_vline(
+        x=0, line_dash="dash", line_color="#f44336", line_width=2,
+        annotation_text="0",
+    )
+
+    mu, sigma = np.mean(residuals), np.std(residuals)
+    x_span = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
+    y_pdf = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_span - mu) / sigma) ** 2)
+    bin_width = (residuals.max() - residuals.min()) / 50 if residuals.max() > residuals.min() else 1
+    y_scaled = y_pdf * len(residuals) * bin_width
+    fig.add_trace(go.Scatter(
+        x=x_span, y=y_scaled,
+        mode="lines",
+        name=f"正态拟合 (μ={mu:.1f}, σ={sigma:.1f})",
+        line=dict(color="#f44336", width=2, dash="dot"),
+    ))
+
+    fig.update_layout(
+        title="光伏残差分布直方图 (LSTM + GAN)",
+        xaxis=dict(title="残差 (kW)"),
+        yaxis=dict(title="频次"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        bargap=0.05,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def build_solar_error_by_hour_chart():
+    """光伏按小时分组的误差分析 (MAE & RMSE)"""
+    if not PLOTLY_AVAILABLE:
+        return go.Figure()
+
+    y_true, y_pred, hours = _solar_sliding_backtest()
+    if y_true is None:
+        return _error_fallback("光伏模型回测不可用")
+
+    error_df = pd.DataFrame({
+        "hour": hours,
+        "abs_error": np.abs(y_true - y_pred),
+        "sq_error": (y_true - y_pred) ** 2,
+    })
+    hourly = error_df.groupby("hour").agg(
+        MAE=("abs_error", "mean"),
+        RMSE=("sq_error", lambda x: np.sqrt(x.mean())),
+        count=("sq_error", "count"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hourly["hour"], y=hourly["MAE"],
+        name="MAE (kW)",
+        marker_color="#ff9800",
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=hourly["hour"], y=hourly["RMSE"],
+        mode="lines+markers",
+        name="RMSE (kW)",
+        line=dict(color="#f44336", width=2),
+        marker=dict(size=6),
+    ))
+
+    fig.update_layout(
+        title="光伏按小时误差分析 (LSTM + GAN, MAE & RMSE)",
+        xaxis=dict(title="小时", dtick=2),
+        yaxis=dict(title="误差 (kW)"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
 
 
 def _error_fallback(msg):
@@ -697,24 +894,54 @@ def plot_daily_load_curves(date_strs):
     for i, ds in enumerate(date_strs):
         try:
             d = pd.to_datetime(ds).date()
-            day_df = df[df[time_col].dt.date == d].sort_values(time_col)
+            # 严格按日期和小时范围过滤：只取当天 00:00 ~ 23:59 的数据
+            day_mask = df[time_col].dt.date == d
+            day_df = df[day_mask].sort_values(time_col).copy()
             if len(day_df) == 0:
                 continue
-            times = [f"{t.hour:02d}:{t.minute:02d}" for t in day_df[time_col]]
+
+            # 确保数据严格在当天范围内（排除跨天数据混入）
+            day_start = pd.Timestamp(d)
+            day_end = day_start + pd.Timedelta(days=1)
+            day_df = day_df[(day_df[time_col] >= day_start) & (day_df[time_col] < day_end)]
+
+            if len(day_df) == 0:
+                continue
+
+            # 使用连续的分钟索引作为 x 轴，避免首尾因"分类"x轴而产生的连线问题
+            day_df["minutes"] = day_df[time_col].dt.hour * 60 + day_df[time_col].dt.minute
+            times = day_df["minutes"].values / 60.0  # 转为小时 (0.0 ~ 23.75)
+
             color = colors[i % len(colors)]
+
+            # 在 points > 1 且间隔过大时不连线，避免跨夜连接
+            connect_gaps = True
+            if len(day_df) > 1:
+                diff = np.diff(day_df["minutes"].values)
+                if np.any(diff > 60):  # 存在超过 1 小时的间隔
+                    connect_gaps = False
+
             fig.add_trace(go.Scatter(
-                x=times, y=day_df[load_col].values,
+                x=times,
+                y=day_df[load_col].values,
                 mode="lines+markers",
                 name=str(d),
                 line=dict(color=color, width=2),
                 marker=dict(size=3),
+                connectgaps=connect_gaps,
             ))
         except Exception as e:
             print(f"[WARNING] 日期 {ds} 绘图失败: {e}")
 
     fig.update_layout(
         title="历史日负荷曲线对比",
-        xaxis=dict(title="时间", tickangle=45, dtick=16),
+        xaxis=dict(
+            title="当日时间 (小时)",
+            tickangle=0,
+            dtick=2,
+            range=[0, 24],
+            tickmode="linear",
+        ),
         yaxis=dict(title="负荷 (kW)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=40, r=40, t=40, b=60),

@@ -695,6 +695,94 @@ def run_prediction(n_steps, weather, current_price=None, current_load=None):
 
 
 # ============================================================
+# app.py 兼容层 — 提供 app.py 直接调用的函数名
+# ============================================================
+_last_predictions = {}  # {"solar": dict, "charging": dict, "combined": dict}
+
+
+def predict_solar(n_steps=4):
+    """简化的光伏预测入口 (兼容 app.py)"""
+    try:
+        weather = {"radiation": 400}  # 默认辐照度
+        model = load_solar_model()
+        if model is None:
+            return None
+        return run_prediction(n_steps, weather)
+    except Exception as e:
+        print(f"[WARN] predict_solar 失败: {e}")
+        return None
+
+
+def predict_charging(price=0.8, load=20.0, n_steps=4):
+    """简化的充电预测入口 (兼容 app.py)"""
+    try:
+        weather = {"radiation": 400}
+        return run_prediction(n_steps, weather, current_price=price, current_load=load)
+    except Exception as e:
+        print(f"[WARN] predict_charging 失败: {e}")
+        return None
+
+
+def save_prediction_result(model_type: str, result: dict):
+    """保存最近一次预测结果"""
+    _last_predictions[model_type] = result
+
+
+def get_last_prediction(model_type: str):
+    """获取最近一次预测结果"""
+    return _last_predictions.get(model_type)
+
+
+def get_combined_prediction(solar_result, charging_result, n_steps=4):
+    """合并光伏和充电预测结果，对齐到相同步数"""
+    if solar_result is None or charging_result is None:
+        return None
+    try:
+        s_solar = np.array(solar_result.get("solar", []))
+        c_load = np.array(charging_result.get("load_mean", []))
+        c_lower = np.array(charging_result.get("load_lower", []))
+        c_upper = np.array(charging_result.get("load_upper", []))
+
+        min_len = min(len(s_solar), len(c_load), n_steps)
+        if min_len == 0:
+            return None
+
+        now = datetime.now()
+        solar_vals = s_solar[:min_len]
+        load_vals = c_load[:min_len]
+        times = [now + timedelta(minutes=15 * i) for i in range(min_len)]
+
+        total_solar = np.sum(solar_vals) * 0.25
+        total_load = np.sum(load_vals) * 0.25
+        green_ratio = total_solar / total_load * 100 if total_load > 0 else 100
+        solar_peak_idx = np.argmax(solar_vals)
+        load_peak_idx = np.argmax(load_vals)
+
+        combined = {
+            "times": times,
+            "solar": solar_vals,
+            "load_mean": load_vals,
+            "load_lower": c_lower[:min_len] if len(c_lower) >= min_len else load_vals * 0.85,
+            "load_upper": c_upper[:min_len] if len(c_upper) >= min_len else load_vals * 1.15,
+            "total_solar": total_solar,
+            "total_load": total_load,
+            "green_ratio": green_ratio,
+            "solar_peak": solar_vals[solar_peak_idx],
+            "solar_peak_time": times[solar_peak_idx],
+            "load_peak": load_vals[load_peak_idx],
+            "model_status": {
+                "solar_ok": True,
+                "charging_ok": True,
+            },
+        }
+        save_prediction_result("combined", combined)
+        return combined
+    except Exception as e:
+        print(f"[WARN] get_combined_prediction 失败: {e}")
+        return None
+
+
+# ============================================================
 # 策略建议生成
 # ============================================================
 def generate_strategy(result):

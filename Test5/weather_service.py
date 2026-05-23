@@ -223,3 +223,9 @@ def get_current_weather_summary(weather_data):
         📅 数据时间: {weather_data['current_time']}
     </div>
     """
+
+
+# ============================================================
+# 别名：兼容 app.py 的导入名称
+# ============================================================
+get_weather = fetch_weather_data

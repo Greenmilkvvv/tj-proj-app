@@ -285,7 +285,7 @@ def get_hourly_profile_chart():
 # ============================================================
 # 误差分析 — 训练曲线
 # ============================================================
-TRAIN_HISTORY_PKL = os.path.join(ROOT_DIR, "Charging_Forecast", "final_train_history.pkl")
+TRAIN_HISTORY_PKL = os.path.join(ROOT_DIR, "Charging_Retraining", "final_train_history.pkl")
 
 
 def get_training_loss_chart():
@@ -362,8 +362,8 @@ def _real_charging_sliding_backtest(df, feature_cols, target_col="load_kw", look
     from config import CHARGING_MODEL_PTH, CHARGING_FEATURE_DIM
     import pickle as pkl
 
-    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_X.pkl")
-    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_y.pkl")
+    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Retraining", "scaler_X.pkl")
+    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Retraining", "scaler_y.pkl")
 
     if not os.path.exists(scaler_X_path) or not os.path.exists(scaler_y_path):
         return None, None, "充电 scaler 文件不存在"

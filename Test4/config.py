@@ -14,7 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 # 模型权重路径
 # ============================================================
 SOLAR_MODEL_PTH = os.path.join(ROOT_DIR, "Solar_Forecast", "best_pth", "best_generator.pth")
-CHARGING_MODEL_PTH = os.path.join(ROOT_DIR, "Charging_Forecast", "best_pth", "final_best_hybrid_model.pth")
+CHARGING_MODEL_PTH = os.path.join(ROOT_DIR, "Charging_Retraining", "best_pth", "final_best_hybrid_model.pth")
 
 # ============================================================
 # 数据文件路径

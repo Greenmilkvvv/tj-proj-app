@@ -92,7 +92,7 @@ if TORCH_AVAILABLE:
             _, (hn, _) = self.lstm(x_attn)
             lstm_out = hn[-1]
             combined = torch.cat([lstm_out, raw_last_step], dim=1)
-            return self.fc(combined)
+            return torch.relu(self.fc(combined))
 
 
 # ============================================================
@@ -138,8 +138,8 @@ def _load_charging_scalers():
     重拟合会改变数据分布映射，与模型训练权重不匹配。
     """
     import pickle
-    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_X.pkl")
-    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Forecast", "scaler_y.pkl")
+    scaler_X_path = os.path.join(ROOT_DIR, "Charging_Retraining", "scaler_X.pkl")
+    scaler_y_path = os.path.join(ROOT_DIR, "Charging_Retraining", "scaler_y.pkl")
     if not os.path.exists(scaler_X_path) or not os.path.exists(scaler_y_path):
         print("[WARN] 充电 scaler 文件不存在, 将使用模拟预测")
         return None, None

@@ -126,7 +126,7 @@ def build_prediction_tab():
     with gr.Row():
         steps_dropdown = gr.Dropdown(
             choices=["15分钟 (1步)", "1小时 (4步)", "24小时 (96步)"],
-            value="1小时 (4步)",
+            value="24小时 (96步)",
             label="预测步数",
             scale=3,
         )
@@ -138,11 +138,20 @@ def build_prediction_tab():
 
     # ---- 联合预测可视化 ----
     gr.Markdown("---")
-    gr.Markdown("### 📊 光伏 + 充电 联合预测")
 
+    # Axe 1: 光伏 (左) + 充电负荷 (右) 并排
+    gr.Markdown("### 📈 预测曲线")
     with gr.Row():
-        joint_plot = gr.Plot(label="预测对比曲线", value=None)
-        summary_plot = gr.Plot(label="关键指标摘要", value=None)
+        solar_plot = gr.Plot(label="光伏出力预测", value=None)
+        charging_plot = gr.Plot(label="充电负荷预测", value=None)
+
+    # Axe 2: 联合分布图 (全宽，含净负荷)
+    gr.Markdown("### 📊 联合分布")
+    joint_plot = gr.Plot(label="光伏 + 充电 联合分布 & 净负荷", value=None)
+
+    # Axe 3: 关键指标摘要 (全宽)
+    gr.Markdown("### 📋 关键指标摘要")
+    summary_plot = gr.Plot(label="关键指标", value=None)
 
     metrics_html = gr.HTML("")
 
@@ -154,12 +163,12 @@ def build_prediction_tab():
     ).then(
         fn=_refresh_joint_view,
         inputs=[steps_dropdown],
-        outputs=[joint_plot, summary_plot, metrics_html],
+        outputs=[solar_plot, charging_plot, joint_plot, summary_plot, metrics_html],
     )
 
     return (steps_dropdown, btn_predict,
             price_input, load_input,
-            joint_plot, summary_plot, status_html, metrics_html)
+            solar_plot, charging_plot, joint_plot, summary_plot, status_html, metrics_html)
 
 
 def _do_joint_prediction(steps_label: str, price: float, load_kw: float):
@@ -200,13 +209,27 @@ def _do_joint_prediction(steps_label: str, price: float, load_kw: float):
 
 
 def _refresh_joint_view(steps_label: str):
-    """刷新联合预测视图"""
+    """刷新联合预测视图 (v4: 返回 5 个图表)"""
     solar_result = get_last_prediction("solar")
     charging_result = get_last_prediction("charging")
 
+    solar_fig = None
+    charging_fig = None
     joint_fig = None
     summary_fig = None
     metrics_html = "<p style='color:#888;'>请先执行光伏和充电预测</p>"
+
+    # 构建单独的光伏图
+    if solar_result is not None:
+        solar_fig = _build_solar_only_chart(solar_result)
+    else:
+        solar_fig = _empty_chart("尚未执行光伏预测")
+
+    # 构建单独的充电图
+    if charging_result is not None:
+        charging_fig = _build_charging_only_chart(charging_result)
+    else:
+        charging_fig = _empty_chart("尚未执行充电预测")
 
     if solar_result is not None and charging_result is not None:
         # 合并预测
@@ -222,9 +245,7 @@ def _refresh_joint_view(steps_label: str):
         combined["load_mean"] = [0] * len(combined.get("solar", []))
         combined["load_lower"] = [0] * len(combined.get("solar", []))
         combined["load_upper"] = [0] * len(combined.get("solar", []))
-        # 计算净负荷
         combined["net"] = combined["solar"]
-        n = len(combined["solar"])
         combined["total_solar"] = sum(combined["solar"]) * 0.25
         combined["total_load"] = 0
         combined["solar_peak"] = max(combined["solar"]) if len(combined["solar"]) > 0 else 0
@@ -238,7 +259,6 @@ def _refresh_joint_view(steps_label: str):
         combined = charging_result.copy()
         combined["solar"] = [0] * len(combined.get("load_mean", []))
         combined["net"] = [-v for v in combined.get("load_mean", [])]
-        n = len(combined["load_mean"])
         combined["total_solar"] = 0
         combined["total_load"] = sum(combined["load_mean"]) * 0.25
         combined["solar_peak"] = 0
@@ -249,7 +269,7 @@ def _refresh_joint_view(steps_label: str):
         summary_fig = create_summary_chart(combined)
         metrics_html = "<p style='color:#888;'>⚠️ 尚未执行光伏预测，仅展示充电数据</p>"
 
-    return joint_fig, summary_fig, metrics_html
+    return solar_fig, charging_fig, joint_fig, summary_fig, metrics_html
 
 
 def _build_solar_only_chart(result):
@@ -265,6 +285,7 @@ def _build_solar_only_chart(result):
         mode="lines+markers",
         name="光伏出力 (kW)",
         line=dict(color="#ff9800", width=2.5),
+        marker=dict(size=3),
         fill="tozeroy",
         fillcolor="rgba(255,152,0,0.15)",
     ))
@@ -290,21 +311,25 @@ def _build_charging_only_chart(result):
     times_str = [t.strftime("%m-%d %H:%M") for t in times]
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=times_str, y=load_mean,
-        mode="lines+markers",
-        name="充电负荷 (kW)",
-        line=dict(color="#2196f3", width=2.5),
-    ))
-    # 置信区间
+    # 置信区间 (先绘制，作为底层)
     x_fill = times_str + times_str[::-1]
     y_fill = load_upper + load_lower[::-1]
     fig.add_trace(go.Scatter(
         x=x_fill, y=y_fill,
         fill="toself",
-        fillcolor="rgba(33,150,243,0.15)",
+        fillcolor="rgba(33,150,243,0.2)",
         line=dict(width=0),
-        name="负荷 85%-115% 区间",
+        name="负荷 95%-105% 区间",
+        hoverinfo="skip",
+        showlegend=True,
+    ))
+    # 主线 (后绘制，叠加在区间之上)
+    fig.add_trace(go.Scatter(
+        x=times_str, y=load_mean,
+        mode="lines+markers",
+        name="充电负荷 (kW)",
+        line=dict(color="#2196f3", width=2.5),
+        marker=dict(size=3),
     ))
     fig.update_layout(
         title="充电负荷预测",

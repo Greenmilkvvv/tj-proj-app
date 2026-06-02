@@ -128,7 +128,7 @@ def create_prediction_chart(result):
             mode="lines+markers",
             name="光伏出力 (kW)",
             line=dict(color="#ff9800", width=2.5),
-            marker=dict(size=5),
+            marker=dict(size=3),
             fill="tozeroy",
             fillcolor="rgba(255,152,0,0.15)",
         ),
@@ -142,7 +142,7 @@ def create_prediction_chart(result):
             mode="lines+markers",
             name="充电负荷 (kW)",
             line=dict(color="#2196f3", width=2.5),
-            marker=dict(size=5),
+            marker=dict(size=3),
         ),
         row=1, col=1,
     )
@@ -153,7 +153,7 @@ def create_prediction_chart(result):
             fill="toself",
             fillcolor="rgba(33,150,243,0.15)",
             line=dict(color="rgba(33,150,243,0.1)", width=0),
-            name="负荷 85%-115% 区间",
+            name="负荷 95%-105% 区间",
         ),
         row=1, col=1,
     )

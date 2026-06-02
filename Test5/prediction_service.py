@@ -335,7 +335,7 @@ def _mock_prediction(n_steps, weather):
     load_peak_idx = np.argmax(load)
     return {
         "times": times, "solar": solar,
-        "load_mean": load, "load_lower": load * 0.85, "load_upper": load * 1.15,
+        "load_mean": load, "load_lower": load * 0.95, "load_upper": load * 1.05,
         "total_solar": total_solar, "total_load": total_load,
         "green_ratio": green_ratio,
         "solar_peak": solar[solar_peak_idx],
@@ -646,8 +646,8 @@ def _predict_charging(model, n_steps, current_price=None, current_load=None):
         window = np.vstack([window, next_feat.reshape(1, -1)])
 
     mean = np.array(outputs)
-    lower = mean * 0.85
-    upper = mean * 1.15
+    lower = mean * 0.95
+    upper = mean * 1.05
     return mean, lower, upper
 
 
@@ -680,7 +680,7 @@ def _fallback_charging(n_steps):
     load += 40 + 30 * np.exp(-0.5 * ((hours - 9) / 2) ** 2)
     load += 30 * np.exp(-0.5 * ((hours - 18) / 2) ** 2)
     load += np.random.randn(n_steps) * 3
-    return {"mean": load, "lower": load * 0.85, "upper": load * 1.15}
+    return {"mean": load, "lower": load * 0.95, "upper": load * 1.05}
 
 
 # ============================================================
@@ -762,8 +762,8 @@ def get_combined_prediction(solar_result, charging_result, n_steps=4):
             "times": times,
             "solar": solar_vals,
             "load_mean": load_vals,
-            "load_lower": c_lower[:min_len] if len(c_lower) >= min_len else load_vals * 0.85,
-            "load_upper": c_upper[:min_len] if len(c_upper) >= min_len else load_vals * 1.15,
+            "load_lower": c_lower[:min_len] if len(c_lower) >= min_len else load_vals * 0.95,
+            "load_upper": c_upper[:min_len] if len(c_upper) >= min_len else load_vals * 1.05,
             "total_solar": total_solar,
             "total_load": total_load,
             "green_ratio": green_ratio,

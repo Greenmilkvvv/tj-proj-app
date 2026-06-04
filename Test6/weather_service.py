@@ -72,7 +72,7 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
             else: desc = "晴天"
             forecast_list.append({"time": rt, "radiation": rv, "cloud": cv, "rain": rn, "weather": desc})
 
-        has_warning = any(r > 5 for r in forecasts["rain"] for forecasts in forecast_list)
+        has_warning = any(f["rain"] > 5 for f in forecast_list)
 
         day_idx = max(0, idx - (now.hour * 4 + now.minute // 15))
         day_end = min(day_idx + 96, len(times))

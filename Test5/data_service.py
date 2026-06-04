@@ -125,10 +125,11 @@ def create_prediction_chart(result):
     fig.add_trace(
         go.Scatter(
             x=df["time"], y=df["solar"],
-            mode="lines+markers",
+            # mode="lines+markers",
+            mode="lines",
             name="光伏出力 (kW)",
-            line=dict(color="#ff9800", width=2.5),
-            marker=dict(size=3),
+            line=dict(color="#ff9800", width=2),
+            marker=dict(size=5),
             fill="tozeroy",
             fillcolor="rgba(255,152,0,0.15)",
         ),
@@ -139,10 +140,11 @@ def create_prediction_chart(result):
     fig.add_trace(
         go.Scatter(
             x=df["time"], y=df["load"],
-            mode="lines+markers",
+            # mode="lines+markers",
+            mode="lines",
             name="充电负荷 (kW)",
-            line=dict(color="#2196f3", width=2.5),
-            marker=dict(size=3),
+            line=dict(color="#2196f3", width=2),
+            marker=dict(size=5),
         ),
         row=1, col=1,
     )

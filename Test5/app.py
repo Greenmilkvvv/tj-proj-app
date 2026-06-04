@@ -284,10 +284,11 @@ def _build_solar_only_chart(result):
         x=times_str, y=solar,
         mode="lines+markers",
         name="光伏出力 (kW)",
-        line=dict(color="#ff9800", width=2.5),
+        line=dict(color="#ff9800", width=1.5),
         marker=dict(size=3),
         fill="tozeroy",
         fillcolor="rgba(255,152,0,0.15)",
+        showlegend=True,
     ))
     fig.update_layout(
         title="光伏出力预测",
@@ -295,7 +296,8 @@ def _build_solar_only_chart(result):
         yaxis=dict(title="kW"),
         height=350,
         template="plotly_white",
-        margin=dict(l=40, r=40, t=40, b=40),
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
 
@@ -311,25 +313,25 @@ def _build_charging_only_chart(result):
     times_str = [t.strftime("%m-%d %H:%M") for t in times]
 
     fig = go.Figure()
-    # 置信区间 (先绘制，作为底层)
-    x_fill = times_str + times_str[::-1]
-    y_fill = load_upper + load_lower[::-1]
-    fig.add_trace(go.Scatter(
-        x=x_fill, y=y_fill,
-        fill="toself",
-        fillcolor="rgba(33,150,243,0.2)",
-        line=dict(width=0),
-        name="负荷 95%-105% 区间",
-        hoverinfo="skip",
-        showlegend=True,
-    ))
-    # 主线 (后绘制，叠加在区间之上)
+    # 主线 (先绘制)
     fig.add_trace(go.Scatter(
         x=times_str, y=load_mean,
         mode="lines+markers",
         name="充电负荷 (kW)",
-        line=dict(color="#2196f3", width=2.5),
+        line=dict(color="#2196f3", width=1.5),
         marker=dict(size=3),
+        showlegend=True,
+    ))
+    # 置信区间 (后绘制，叠加在主线之上，与 data_service 保持一致)
+    x_fill = np.concatenate([times_str, times_str[::-1]])
+    y_fill = np.concatenate([load_upper, load_lower[::-1]])
+    fig.add_trace(go.Scatter(
+        x=x_fill, y=y_fill,
+        fill="toself",
+        fillcolor="rgba(33,150,243,0.15)",
+        line=dict(color="rgba(33,150,243,0.1)", width=0),
+        name="负荷 95%-105% 区间",
+        showlegend=True,
     ))
     fig.update_layout(
         title="充电负荷预测",
@@ -337,7 +339,8 @@ def _build_charging_only_chart(result):
         yaxis=dict(title="kW"),
         height=350,
         template="plotly_white",
-        margin=dict(l=40, r=40, t=40, b=40),
+        margin=dict(l=40, r=40, t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
 
@@ -438,8 +441,8 @@ def _empty_table():
 # ============================================================
 def build_data_tab():
     """构建数据探索 Tab (v3: 移除上传功能)"""
-    gr.Markdown("### 📋 数据集概览")
-    overview_html = gr.HTML(value=get_dataset_overview())
+    # gr.Markdown("### 📋 数据集概览")
+    # overview_html = gr.HTML(value=get_dataset_overview())
 
     gr.Markdown("### 📉 历史日负荷曲线")
     available_dates = get_available_dates()

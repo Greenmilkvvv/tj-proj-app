@@ -322,8 +322,7 @@ def run_backtest_charging():
     residuals = y_true - y_pred
     rmse = np.sqrt(np.mean(residuals ** 2))
     mae = np.mean(np.abs(residuals))
-    nonzero = np.abs(y_true) > 10
-    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+    wape = np.sum(np.abs(residuals)) / np.sum(np.abs(y_true)) * 100 if np.sum(np.abs(y_true)) > 0 else float("nan")
     ss_res = np.sum(residuals ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
@@ -375,7 +374,7 @@ def run_backtest_charging():
         f"|------|----|\n"
         f"| RMSE | **{rmse:.2f}** kW |\n"
         f"| MAE  | **{mae:.2f}** kW |\n"
-        f"| MAPE | **{mape:.1f}%** (|load|>10kW) |\n"
+        f"| WAPE | **{wape:.1f}%** |\n"
         f"| R²   | **{r2:.4f}** |\n"
         f"\n> 使用真实 **TCN-Attention-LSTM** 模型滑动窗口滚动预测"
     )
@@ -560,8 +559,7 @@ def run_backtest_solar():
     residuals = y_true - y_pred
     rmse = np.sqrt(np.mean(residuals ** 2))
     mae = np.mean(np.abs(residuals))
-    nonzero = np.abs(y_true) > 1
-    mape = np.mean(np.abs(residuals[nonzero] / y_true[nonzero])) * 100 if nonzero.sum() > 0 else float("nan")
+    wape = np.sum(np.abs(residuals)) / np.sum(np.abs(y_true)) * 100 if np.sum(np.abs(y_true)) > 0 else float("nan")
     ss_res = np.sum(residuals ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
@@ -613,7 +611,7 @@ def run_backtest_solar():
         f"|------|----|\n"
         f"| RMSE | **{rmse:.2f}** kW |\n"
         f"| MAE  | **{mae:.2f}** kW |\n"
-        f"| MAPE | **{mape:.1f}%** (|power|>1kW) |\n"
+        f"| WAPE | **{wape:.1f}%** |\n"
         f"| R²   | **{r2:.4f}** |\n"
         f"\n> 使用真实 **LSTM + GAN** 模型滑动窗口滚动预测"
     )

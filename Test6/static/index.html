@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>光储充智能预测系统</title>
+<!-- ECharts CDN -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<!-- 字体 -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<!-- 顶部导航栏 -->
+<header class="navbar">
+  <div class="nav-brand">
+    <i class="fas fa-bolt nav-icon"></i>
+    <span class="nav-title">光储充智能预测</span>
+  </div>
+  <div class="nav-status">
+    <span id="connection-status" class="status-dot offline"></span>
+    <span id="status-text">离线</span>
+    <span class="nav-time" id="current-time">--</span>
+  </div>
+  <div class="nav-actions">
+    <button class="btn-icon" id="theme-toggle" title="切换主题">
+      <i class="fas fa-moon"></i>
+    </button>
+    <button class="btn-icon" id="refresh-btn" title="刷新数据">
+      <i class="fas fa-sync-alt"></i>
+    </button>
+  </div>
+</header>
+
+<!-- 主布局 -->
+<main class="dashboard">
+  <!-- 左侧面板：气象 + 控制 -->
+  <aside class="panel-left">
+    <!-- 实时气象卡片 -->
+    <section class="card weather-card">
+      <div class="card-header">
+        <h2><i class="fas fa-cloud-sun"></i> 实时气象</h2>
+        <span class="badge" id="weather-badge">实时</span>
+      </div>
+      <div class="weather-main">
+        <div class="weather-icon" id="weather-icon">&#x2600;&#xFE0F;</div>
+        <div class="weather-primary">
+          <span class="temp" id="weather-temp">--°C</span>
+          <span class="desc" id="weather-desc">加载中...</span>
+        </div>
+      </div>
+      <div class="weather-details">
+        <div class="detail-item">
+          <i class="fas fa-sun"></i>
+          <span class="label">辐射</span>
+          <span class="value" id="weather-rad">-- W/m²</span>
+        </div>
+        <div class="detail-item">
+          <i class="fas fa-cloud"></i>
+          <span class="label">云量</span>
+          <span class="value" id="weather-cloud">--%</span>
+        </div>
+        <div class="detail-item">
+          <i class="fas fa-droplet"></i>
+          <span class="label">降雨</span>
+          <span class="value" id="weather-rain">-- mm</span>
+        </div>
+      </div>
+      <div id="weather-warning" class="weather-alert hidden">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>恶劣天气预警</span>
+      </div>
+    </section>
+
+    <!-- 预测控制卡 -->
+    <section class="card control-card">
+      <div class="card-header">
+        <h2><i class="fas fa-sliders"></i> 预测控制</h2>
+      </div>
+      <div class="control-form">
+        <div class="form-group">
+          <label>预测时长</label>
+          <div class="btn-group" id="step-group">
+            <button class="btn-option active" data-steps="4">1 小时</button>
+            <button class="btn-option" data-steps="24">6 小时</button>
+            <button class="btn-option" data-steps="96">24 小时</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>当前电价 (元/kWh)</label>
+          <input type="number" id="price-input" class="input-field" value="0.8" step="0.01" min="0" max="2">
+        </div>
+        <div class="form-group">
+          <label>当前负荷 (kW)</label>
+          <input type="number" id="load-input" class="input-field" value="875" step="1" min="0">
+        </div>
+        <button class="btn-primary" id="predict-btn">
+          <i class="fas fa-play"></i> 运行预测
+        </button>
+      </div>
+    </section>
+
+    <!-- 当天电价 -->
+    <section class="card price-card">
+      <div class="card-header">
+        <h2><i class="fas fa-chart-line"></i> 当日电价</h2>
+      </div>
+      <div class="price-chart-wrap">
+        <div id="price-chart" style="height:180px;"></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- 中央面板：图表主体 -->
+  <section class="panel-center">
+    <!-- 概览卡片行 -->
+    <div class="overview-row">
+      <div class="overview-card solar-card">
+        <div class="oc-icon"><i class="fas fa-solar-panel"></i></div>
+        <div class="oc-body">
+          <span class="oc-label">总光伏发电</span>
+          <span class="oc-value" id="kpi-solar">-- <small>kWh</small></span>
+        </div>
+      </div>
+      <div class="overview-card load-card">
+        <div class="oc-icon"><i class="fas fa-charging-station"></i></div>
+        <div class="oc-body">
+          <span class="oc-label">总充电负荷</span>
+          <span class="oc-value" id="kpi-load">-- <small>kWh</small></span>
+        </div>
+      </div>
+      <div class="overview-card green-card">
+        <div class="oc-icon"><i class="fas fa-leaf"></i></div>
+        <div class="oc-body">
+          <span class="oc-label">绿电覆盖率</span>
+          <span class="oc-value" id="kpi-green">-- <small>%</small></span>
+        </div>
+      </div>
+      <div class="overview-card peak-card">
+        <div class="oc-icon"><i class="fas fa-arrow-up"></i></div>
+        <div class="oc-body">
+          <span class="oc-label">光伏峰值</span>
+          <span class="oc-value" id="kpi-peak">-- <small>kW</small></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主预测图表 -->
+    <div class="card chart-card">
+      <div class="card-header">
+        <h2><i class="fas fa-chart-area"></i> 光伏出力 vs 充电负荷 预测</h2>
+        <div class="chart-tabs">
+          <button class="tab-btn active" data-view="combined">联合视图</button>
+          <button class="tab-btn" data-view="solar">光伏</button>
+          <button class="tab-btn" data-view="load">负荷</button>
+        </div>
+      </div>
+      <div id="main-chart" style="height:420px;"></div>
+    </div>
+
+    <!-- 气象趋势图 -->
+    <div class="card chart-card">
+      <div class="card-header">
+        <h2><i class="fas fa-cloud-sun-rain"></i> 辐射 & 云量趋势</h2>
+      </div>
+      <div id="weather-chart" style="height:280px;"></div>
+    </div>
+  </section>
+
+  <!-- 右侧面板：策略 + 状态 -->
+  <aside class="panel-right">
+    <!-- 模型状态 -->
+    <section class="card status-card">
+      <div class="card-header">
+        <h2><i class="fas fa-microchip"></i> 模型状态</h2>
+      </div>
+      <div class="status-list">
+        <div class="status-item">
+          <span>光伏模型</span>
+          <span class="status-tag" id="model-solar-status">加载中</span>
+        </div>
+        <div class="status-item">
+          <span>充电模型</span>
+          <span class="status-tag" id="model-charging-status">加载中</span>
+        </div>
+        <div class="status-item">
+          <span>气象数据</span>
+          <span class="status-tag" id="model-weather-status">加载中</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 策略建议 -->
+    <section class="card strategy-card">
+      <div class="card-header">
+        <h2><i class="fas fa-lightbulb"></i> 策略建议</h2>
+      </div>
+      <div id="strategy-content" class="strategy-body">
+        <p class="placeholder-text">点击"运行预测"获取策略建议</p>
+      </div>
+    </section>
+
+    <!-- 盈余/缺口 -->
+    <section class="card balance-card">
+      <div class="card-header">
+        <h2><i class="fas fa-balance-scale"></i> 能量平衡</h2>
+      </div>
+      <div id="balance-content" class="balance-body">
+        <p class="placeholder-text">预测后显示盈余/缺口分析</p>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- 底部加载提示 -->
+<div id="loading-overlay" class="loading-overlay hidden">
+  <div class="spinner"></div>
+  <p>正在运行预测...</p>
+</div>
+
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/charts.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

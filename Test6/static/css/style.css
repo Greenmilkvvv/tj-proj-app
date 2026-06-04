@@ -1,0 +1,113 @@
+/* ============================================================
+   光储充智能预测系统 — 样式表
+   ============================================================ */
+
+/* ---------- CSS 变量 (明/暗主题) ---------- */
+:root,[data-theme="light"]{--bg-primary:#F8FAFC;--bg-secondary:#FFFFFF;--bg-tertiary:#F1F5F9;--bg-card:#FFFFFF;--text-primary:#1E293B;--text-secondary:#64748B;--text-muted:#94A3B8;--border:#E2E8F0;--shadow:0 1px 3px rgba(0,0,0,.08),0 4px 24px rgba(0,0,0,.04);--shadow-lg:0 8px 32px rgba(0,0,0,.08);--accent:#3B82F6;--accent-hover:#2563EB;--solar:#F59E0B;--load:#3B82F6;--green:#10B981;--red:#EF4444;--peak:#8B5CF6;}
+[data-theme="dark"]{--bg-primary:#0F172A;--bg-secondary:#1E293B;--bg-tertiary:#273548;--bg-card:#1E293B;--text-primary:#F1F5F9;--text-secondary:#94A3B8;--text-muted:#64748B;--border:#334155;--shadow:0 1px 3px rgba(0,0,0,.3),0 4px 24px rgba(0,0,0,.2);--shadow-lg:0 8px 32px rgba(0,0,0,.4);--accent:#60A5FA;--accent-hover:#3B82F6;--solar:#FBBF24;--load:#60A5FA;--green:#34D399;--red:#F87171;--peak:#A78BFA;}
+
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{font-size:14px}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg-primary);color:var(--text-primary);line-height:1.6;min-height:100vh;transition:background .3s,color .3s}
+
+/* ---------- 导航栏 ---------- */
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:var(--bg-secondary);border-bottom:1px solid var(--border);box-shadow:var(--shadow);position:sticky;top:0;z-index:100}
+.nav-brand{display:flex;align-items:center;gap:10px}
+.nav-icon{font-size:22px;color:var(--solar)}
+.nav-title{font-size:1.1rem;font-weight:700}
+.nav-status{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--text-secondary)}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.status-dot.online{background:var(--green);box-shadow:0 0 6px var(--green)}
+.status-dot.offline{background:var(--text-muted)}
+.nav-time{margin-left:16px;font-variant-numeric:tabular-nums}
+.nav-actions{display:flex;gap:8px}
+.btn-icon{width:36px;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.btn-icon:hover{background:var(--bg-tertiary);color:var(--accent);border-color:var(--accent)}
+
+/* ---------- 主布局 ---------- */
+.dashboard{display:grid;grid-template-columns:320px 1fr 300px;gap:20px;padding:20px 24px;max-width:1600px;margin:0 auto}
+.panel-left,.panel-right{display:flex;flex-direction:column;gap:16px}
+.panel-center{display:flex;flex-direction:column;gap:16px;min-width:0}
+
+/* ---------- 卡片 ---------- */
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:var(--shadow);transition:box-shadow .3s}
+.card:hover{box-shadow:var(--shadow-lg)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.card-header h2{font-size:.95rem;font-weight:600;display:flex;align-items:center;gap:8px;color:var(--text-primary)}
+.card-header h2 i{color:var(--accent);font-size:.9rem}
+.badge{padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:500;background:var(--green);color:#fff}
+
+/* ---------- 气象卡片 ---------- */
+.weather-main{display:flex;align-items:center;gap:16px;padding:8px 0 16px}
+.weather-icon{font-size:3rem;line-height:1}
+.weather-primary{display:flex;flex-direction:column}
+.temp{font-size:2rem;font-weight:800;line-height:1.1}
+.desc{font-size:.9rem;color:var(--text-secondary)}
+.weather-details{display:flex;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)}
+.detail-item{text-align:center;flex:1}
+.detail-item i{font-size:.85rem;color:var(--text-muted);display:block;margin-bottom:4px}
+.detail-item .label{display:block;font-size:.7rem;color:var(--text-muted);text-transform:uppercase}
+.detail-item .value{font-size:.85rem;font-weight:600}
+.weather-alert{margin-top:12px;padding:8px 12px;background:rgba(239,68,68,.15);border-radius:8px;color:var(--red);font-size:.8rem;display:flex;align-items:center;gap:6px}
+.weather-alert.hidden{display:none}
+
+/* ---------- 控制卡片 ---------- */
+.control-form{display:flex;flex-direction:column;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group label{font-size:.78rem;font-weight:500;color:var(--text-secondary)}
+.btn-group{display:flex;gap:4px;background:var(--bg-tertiary);border-radius:10px;padding:3px}
+.btn-option{flex:1;padding:7px 8px;border:none;border-radius:8px;font-size:.78rem;font-weight:500;cursor:pointer;background:transparent;color:var(--text-secondary);transition:all .2s}
+.btn-option.active{background:var(--bg-card);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.btn-option:hover:not(.active){color:var(--text-primary)}
+.input-field{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-tertiary);color:var(--text-primary);font-size:.85rem;font-family:inherit;transition:border-color .2s}
+.input-field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.btn-primary{width:100%;padding:11px 16px;border:none;border-radius:12px;background:var(--accent);color:#fff;font-size:.9rem;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s}
+.btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 4px 16px rgba(59,130,246,.3)}
+.btn-primary:active{transform:translateY(0)}
+
+/* ---------- 概览卡片行 ---------- */
+.overview-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.overview-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;display:flex;align-items:center;gap:14px;transition:transform .2s,box-shadow .2s}
+.overview-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.oc-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;color:#fff;flex-shrink:0}
+.solar-card .oc-icon{background:linear-gradient(135deg,var(--solar),#D97706)}
+.load-card .oc-icon{background:linear-gradient(135deg,var(--load),#4F46E5)}
+.green-card .oc-icon{background:linear-gradient(135deg,var(--green),#059669)}
+.peak-card .oc-icon{background:linear-gradient(135deg,var(--peak),#7C3AED)}
+.oc-body{display:flex;flex-direction:column}
+.oc-label{font-size:.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em}
+.oc-value{font-size:1.35rem;font-weight:700;line-height:1.2}
+.oc-value small{font-size:.7rem;font-weight:500;color:var(--text-secondary)}
+
+/* ---------- 图表卡片 ---------- */
+.chart-card{padding:16px 20px}
+.chart-tabs{display:flex;gap:4px;background:var(--bg-tertiary);border-radius:8px;padding:2px}
+.tab-btn{padding:5px 12px;border:none;border-radius:6px;font-size:.75rem;cursor:pointer;background:transparent;color:var(--text-secondary);transition:all .2s}
+.tab-btn.active{background:var(--bg-card);color:var(--accent);font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+
+/* ---------- 状态卡片 ---------- */
+.status-list{display:flex;flex-direction:column;gap:10px}
+.status-item{display:flex;align-items:center;justify-content:space-between;font-size:.85rem;padding:8px 0;border-bottom:1px solid var(--border)}
+.status-item:last-child{border-bottom:none}
+.status-tag{padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:500;background:var(--bg-tertiary);color:var(--text-secondary)}
+.status-tag.ok{background:rgba(16,185,129,.15);color:var(--green)}
+.status-tag.fail{background:rgba(239,68,68,.15);color:var(--red)}
+
+/* ---------- 策略 / 平衡卡片 ---------- */
+.strategy-body,.balance-body{font-size:.85rem;color:var(--text-secondary);line-height:1.7}
+.placeholder-text{text-align:center;padding:20px 10px;color:var(--text-muted);font-style:italic}
+.strategy-item,.balance-item{padding:6px 0;display:flex;align-items:center;gap:8px}
+.strategy-item i,.balance-item i{font-size:.75rem;width:18px;text-align:center}
+.surplus-tag{color:var(--green)}
+.deficit-tag{color:var(--red)}
+
+/* ---------- 加载遮罩 ---------- */
+.loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;color:#fff;gap:12px}
+.loading-overlay.hidden{display:none}
+.spinner{width:40px;height:40px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- 响应式 ---------- */
+@media(max-width:1280px){.dashboard{grid-template-columns:280px 1fr 260px;gap:14px;padding:16px}}
+@media(max-width:1024px){.dashboard{grid-template-columns:1fr}.panel-left,.panel-right{flex-flow:row wrap;gap:12px}.panel-left .card,.panel-right .card{flex:1 1 280px}.overview-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.overview-row{grid-template-columns:1fr 1fr}.navbar{padding:0 12px}}

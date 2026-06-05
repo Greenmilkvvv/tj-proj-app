@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>光储充智能预测 Demo v4</title>
+<!-- Plotly JS -->
+<script src="https://cdn.plot.ly/plotly-2.35.3.min.js"></script>
+<!-- Custom CSS -->
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- Header -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <h1>⚡ 光储充智能预测系统</h1>
+    <p>Solar-Storage-Charging Intelligent Forecasting Demo</p>
+  </div>
+  <div class="header-right">
+    <span class="status-dot" id="status-dot" title="服务状态"></span>
+    <span id="status-text">服务就绪</span>
+    <button id="theme-toggle" title="切换暗色模式">🌙</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- Tab Navigation -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<nav class="tab-nav" id="tab-nav">
+  <button class="tab-btn active" data-tab="tab-weather">🌤️ 实时气象</button>
+  <button class="tab-btn" data-tab="tab-predict">📊 联合预测</button>
+  <button class="tab-btn" data-tab="tab-explore">🔍 数据探索</button>
+  <button class="tab-btn" data-tab="tab-error">📈 误差分析</button>
+  <button class="tab-btn" data-tab="tab-model">🧠 模型信息</button>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- Tab Content -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<main class="tab-content" id="tab-content">
+
+  <!-- ========== Tab 1: 实时气象 ========== -->
+  <section class="tab-panel active" id="tab-weather">
+    <h2 class="tab-title">🌤️ 实时气象监测</h2>
+    <div id="weather-summary"><p class="loading-text">正在加载气象数据...</p></div>
+    <div class="chart-container" id="chart-radiation"></div>
+    <div class="forecast-table-wrap">
+      <h3>未来 3 小时预报</h3>
+      <div id="weather-forecast-table"></div>
+    </div>
+    <div id="weather-warning"></div>
+  </section>
+
+  <!-- ========== Tab 2: 联合预测 ========== -->
+  <section class="tab-panel" id="tab-predict">
+    <h2 class="tab-title">📊 联合预测与策略推荐</h2>
+
+    <!-- 预测控制面板 -->
+    <div class="predict-controls">
+      <div class="control-group">
+        <label for="pred-mode">预测时长</label>
+        <select id="pred-mode">
+          <option value="1">15分钟 单步</option>
+          <option value="4" selected>1小时 预测</option>
+          <option value="96">24小时 预测</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="pred-price">当前电价 (元/kWh)</label>
+        <input type="number" id="pred-price" value="0.63" step="0.01" min="0" max="5">
+      </div>
+      <div class="control-group">
+        <label for="pred-load">当前充电负荷 (kW)</label>
+        <input type="number" id="pred-load" value="875" step="1" min="0">
+      </div>
+      <button id="btn-predict" class="btn-primary">🚀 开始预测</button>
+    </div>
+
+    <!-- 指标卡片 -->
+    <div class="card-grid" id="metric-cards">
+      <div class="metric-card green">
+        <div class="metric-value" id="mc-green">--</div>
+        <div class="metric-label">绿电替代率 (%)</div>
+      </div>
+      <div class="metric-card orange">
+        <div class="metric-value" id="mc-solar">--</div>
+        <div class="metric-label">总光伏 (kWh)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" id="mc-load">--</div>
+        <div class="metric-label">总负荷 (kWh)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" id="mc-peak">--</div>
+        <div class="metric-label">峰值光伏 (kW)</div>
+      </div>
+    </div>
+
+    <!-- 预测图表 -->
+    <div class="chart-container" id="chart-prediction"></div>
+
+    <!-- 策略推荐 -->
+    <div class="strategy-box" id="strategy-box">
+      <h3>💡 充电策略建议</h3>
+      <div id="strategy-content"><p class="loading-text">请先执行预测</p></div>
+    </div>
+
+    <!-- 模型状态 -->
+    <div id="model-status-bar"></div>
+  </section>
+
+  <!-- ========== Tab 3: 数据探索 ========== -->
+  <section class="tab-panel" id="tab-explore">
+    <h2 class="tab-title">🔍 数据探索</h2>
+
+    <!-- 数据集概览 -->
+    <div class="section-card">
+      <h3>📋 数据集概览</h3>
+      <div id="data-overview"><p class="loading-text">正在加载...</p></div>
+    </div>
+
+    <!-- 日负荷曲线 -->
+    <div class="section-card">
+      <h3>📅 历史日负荷曲线对比</h3>
+      <div class="date-selector">
+        <label>选择日期 (可多选 Ctrl+Click):</label>
+        <select id="date-picker" multiple size="5"></select>
+        <button id="btn-load-curve" class="btn-primary">📈 绘制曲线</button>
+      </div>
+      <div class="chart-container" id="chart-daily-load"></div>
+    </div>
+
+    <!-- 特征相关性 -->
+    <div class="section-card">
+      <h3>🔗 特征相关性分析</h3>
+      <button id="btn-correlation" class="btn-secondary">计算 Pearson 相关系数</button>
+      <div class="chart-container" id="chart-correlation"></div>
+    </div>
+
+    <!-- 24h 剖面 -->
+    <div class="section-card">
+      <h3>⏰ 24小时负荷剖面</h3>
+      <button id="btn-hourly-profile" class="btn-secondary">生成剖面图</button>
+      <div class="chart-container" id="chart-hourly-profile"></div>
+    </div>
+  </section>
+
+  <!-- ========== Tab 4: 误差分析 ========== -->
+  <section class="tab-panel" id="tab-error">
+    <h2 class="tab-title">📈 误差分析与模型回测</h2>
+
+    <!-- 充电模型回测 -->
+    <div class="section-card">
+      <h3>🔋 充电模型回测 (TCN-Attention-LSTM)</h3>
+      <button id="btn-backtest-charging" class="btn-secondary">▶️ 运行回测</button>
+      <div class="chart-container" id="chart-backtest-charging"></div>
+      <div id="backtest-charging-summary" class="markdown-content"></div>
+    </div>
+
+    <!-- 光伏模型回测 -->
+    <div class="section-card">
+      <h3>☀️ 光伏模型回测 (LSTM + GAN)</h3>
+      <button id="btn-backtest-solar" class="btn-secondary">▶️ 运行回测</button>
+      <div class="chart-container" id="chart-backtest-solar"></div>
+      <div id="backtest-solar-summary" class="markdown-content"></div>
+    </div>
+
+    <!-- 误差分布 -->
+    <div class="chart-grid-2col">
+      <div class="section-card">
+        <h3>🔋 充电残差分布</h3>
+        <button id="btn-charging-error-dist" class="btn-sm">加载图表</button>
+        <div class="chart-container" id="chart-charging-error-dist"></div>
+      </div>
+      <div class="section-card">
+        <h3>☀️ 光伏残差分布</h3>
+        <button id="btn-solar-error-dist" class="btn-sm">加载图表</button>
+        <div class="chart-container" id="chart-solar-error-dist"></div>
+      </div>
+    </div>
+
+    <!-- 按小时误差 -->
+    <div class="chart-grid-2col">
+      <div class="section-card">
+        <h3>🔋 充电按时误差</h3>
+        <button id="btn-charging-error-hourly" class="btn-sm">加载图表</button>
+        <div class="chart-container" id="chart-charging-error-hourly"></div>
+      </div>
+      <div class="section-card">
+        <h3>☀️ 光伏按时误差</h3>
+        <button id="btn-solar-error-hourly" class="btn-sm">加载图表</button>
+        <div class="chart-container" id="chart-solar-error-hourly"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== Tab 5: 模型信息 ========== -->
+  <section class="tab-panel" id="tab-model">
+    <h2 class="tab-title">🧠 模型信息</h2>
+    <div class="section-card">
+      <div id="model-info-content" class="markdown-content">
+        <p class="loading-text">正在加载模型信息...</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- Custom JS -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+  <script src="/js/app.js"></script>
+
+</body>
+</html>

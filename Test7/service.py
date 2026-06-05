@@ -1,0 +1,300 @@
+"""
+BentoML 服务入口 — 纯 HTML+CSS+JS 前端 (5-Tab)
+==========================================
+基于 Test5 的 5-Tab 界面设计，通过 BentoML 同时提供:
+  - 静态文件 (HTML/CSS/JS)
+  - REST API 端点 (预测、气象、数据探索、误差分析)
+
+路由设计:
+  /            -> Starlette StaticFiles (index.html, css/, js/)
+  /api/*       -> BentoML 原生 API 端点
+
+完全移除 Gradio 依赖，前端使用 Plotly JS 图表库。
+"""
+from __future__ import annotations
+
+import os
+import sys
+import json
+import traceback
+from datetime import datetime
+from typing import Optional
+
+import bentoml
+
+# 让子模块可 import
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config import DEFAULT_PREDICTION_STEPS, PREDICTION_OPTIONS
+
+# ============================================================
+# 静态文件目录
+# ============================================================
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+# ============================================================
+# BentoML 服务定义 (所有 API 端点使用 /api/ 前缀)
+# ============================================================
+@bentoml.service(name="solar_charging_demo")
+class SolarChargingDemo:
+    """光储充智能预测服务 — 纯 HTML 5-Tab UI"""
+
+    # ============================================================
+    # 生命周期
+    # ============================================================
+    @bentoml.on_startup
+    async def startup(self):
+        print("[BentoML] 预加载气象数据...")
+        try:
+            from weather_service import get_weather
+            get_weather()
+            print("[BentoML] 气象数据加载完成")
+        except Exception as e:
+            print(f"[BentoML] 气象数据加载失败 (非致命): {e}")
+
+    # ============================================================
+    # API: 气象数据
+    # ============================================================
+    @bentoml.api(route="/api/api_weather")
+    async def get_api_weather(self, _body: str = "") -> dict:
+        try:
+            from weather_service import fetch_weather_data, get_current_weather_summary
+            wd = fetch_weather_data()
+            summary_html = get_current_weather_summary(wd)
+            return {
+                "success": True,
+                "weather": wd,
+                "summary_html": summary_html,
+            }
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    # ============================================================
+    # API: 预测
+    # ============================================================
+    @bentoml.api(route="/api/api_predict")
+    async def get_api_predict(
+        self,
+        model: str = "combined",
+        n_steps: int = DEFAULT_PREDICTION_STEPS,
+        price: float = 0.63,
+        load: float = 875.0,
+    ) -> dict:
+        """
+        model: "solar" | "charging" | "combined"
+        n_steps: 1 / 4 / 96
+        price: 当前电价 (元/kWh)
+        load: 当前充电负荷 (kW)
+        """
+        try:
+            from prediction_service import run_prediction
+            weather = {"radiation": 400}
+            result = run_prediction(n_steps, weather, current_price=price, current_load=load)
+
+            # 序列化 datetime
+            times_iso = [t.isoformat() if hasattr(t, "isoformat") else str(t) for t in result["times"]]
+            times_str = [t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)[-8:-3] for t in result["times"]]
+
+            solar_list = [float(v) for v in result["solar"]]
+            load_mean_list = [float(v) for v in result["load_mean"]]
+            load_lower_list = [float(v) for v in result["load_lower"]]
+            load_upper_list = [float(v) for v in result["load_upper"]]
+
+            from prediction_service import generate_strategy
+            strategy = generate_strategy(result)
+
+            return {
+                "success": True,
+                "times": times_str,
+                "times_iso": times_iso,
+                "solar": solar_list,
+                "load_mean": load_mean_list,
+                "load_lower": load_lower_list,
+                "load_upper": load_upper_list,
+                "total_solar": float(result["total_solar"]),
+                "total_load": float(result["total_load"]),
+                "green_ratio": float(result["green_ratio"]),
+                "solar_peak": float(result["solar_peak"]),
+                "solar_peak_time": result["solar_peak_time"].strftime("%H:%M") if hasattr(result["solar_peak_time"], "strftime") else str(result["solar_peak_time"]),
+                "load_peak": float(result["load_peak"]),
+                "model_status": result.get("model_status", {"solar_ok": False, "charging_ok": False}),
+                "strategy": strategy,
+            }
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    # ============================================================
+    # API: 数据探索
+    # ============================================================
+    @bentoml.api(route="/api/api_data_overview")
+    async def get_api_data_overview(self, _body: str = "") -> dict:
+        try:
+            from data_service import get_dataset_overview, get_available_dates
+            overview_html = get_dataset_overview()
+            dates = get_available_dates()
+            return {"success": True, "overview_html": overview_html, "dates": dates}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_daily_load")
+    async def get_api_daily_load(self, payload: Optional[dict] = None) -> dict:
+        try:
+            from data_service import plot_daily_load_curves
+            # 从 JSON body 中获取 dates 列表
+            dates = (payload or {}).get("dates", [])
+            fig = plot_daily_load_curves(dates or [])
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_correlation")
+    async def get_api_correlation(self, _body: str = "") -> dict:
+        try:
+            from data_service import get_correlation_chart
+            fig = get_correlation_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_hourly_profile")
+    async def get_api_hourly_profile(self, _body: str = "") -> dict:
+        try:
+            from data_service import get_hourly_profile_chart
+            fig = get_hourly_profile_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    # ============================================================
+    # API: 误差分析
+    # ============================================================
+    @bentoml.api(route="/api/api_backtest_charging")
+    async def get_api_backtest_charging(self, _body: str = "") -> dict:
+        try:
+            from data_service import run_backtest_charging
+            fig, summary = run_backtest_charging()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder)), "summary": summary}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_backtest_solar")
+    async def get_api_backtest_solar(self, _body: str = "") -> dict:
+        try:
+            from data_service import run_backtest_solar
+            fig, summary = run_backtest_solar()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder)), "summary": summary}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_charging_error_dist")
+    async def get_api_charging_error_dist(self, _body: str = "") -> dict:
+        try:
+            from data_service import build_charging_error_distribution_chart
+            fig = build_charging_error_distribution_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_charging_error_hourly")
+    async def get_api_charging_error_hourly(self, _body: str = "") -> dict:
+        try:
+            from data_service import build_charging_error_by_hour_chart
+            fig = build_charging_error_by_hour_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_solar_error_dist")
+    async def get_api_solar_error_dist(self, _body: str = "") -> dict:
+        try:
+            from data_service import build_solar_error_distribution_chart
+            fig = build_solar_error_distribution_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    @bentoml.api(route="/api/api_solar_error_hourly")
+    async def get_api_solar_error_hourly(self, _body: str = "") -> dict:
+        try:
+            from data_service import build_solar_error_by_hour_chart
+            fig = build_solar_error_by_hour_chart()
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    # ============================================================
+    # 模型信息
+    # ============================================================
+    @bentoml.api(route="/api/api_model_info")
+    async def get_api_model_info(self, _body: str = "") -> dict:
+        try:
+            from data_service import get_charging_model_info
+            info = get_charging_model_info()
+            return {"success": True, "info": info}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+
+# ============================================================
+# 挂载静态文件 ASGI 应用 (路径: /)
+# 注意: API 端点使用 /api/ 前缀，不会与静态文件冲突
+# ============================================================
+try:
+    from starlette.staticfiles import StaticFiles
+    from starlette.applications import Starlette
+    from starlette.responses import FileResponse
+
+    static_app = Starlette()
+
+    # 挂载 /css 和 /js 子目录
+    static_app.mount(
+        "/css",
+        StaticFiles(directory=os.path.join(STATIC_DIR, "css"), html=False),
+        name="css",
+    )
+    static_app.mount(
+        "/js",
+        StaticFiles(directory=os.path.join(STATIC_DIR, "js"), html=False),
+        name="js",
+    )
+
+    # 根路径返回 index.html
+    @static_app.route("/")
+    async def homepage(request):
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path, media_type="text/html")
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse("index.html not found", status_code=404)
+
+    SolarChargingDemo.mount_asgi_app(static_app, path="/")
+    print(f"[BentoML] 静态文件已挂载: {STATIC_DIR}")
+    print(f"[BentoML] 路由: / -> StaticFiles, /api/* -> BentoML APIs")
+except ImportError as e:
+    print(f"[BentoML] 静态文件挂载失败: {e}")
+
+# BentoML 服务入口
+svc = SolarChargingDemo

@@ -29,10 +29,10 @@
 
 | 项目 | 内容 |
 |------|------|
-| 硬件环境 | 开发硬件环境：Intel i7-12700H / 16GB RAM / 512GB SSD<br>运行硬件环境：Intel i5 2.0GHz及以上 / 8GB RAM / 256GB |
+| 硬件环境 | 开发硬件环境：Intel i7-12700H (14核) / 16GB DDR5 6400MHz / 512GB NVMe SSD / NVIDIA RTX 2050 (4GB)<br>运行硬件环境：Intel i5 2.0GHz及以上 / 8GB RAM / 256GB |
 | 软件环境 | 开发操作系统：Windows 11<br>软件开发环境/开发工具：VS Code、Python 3.10、PyTorch 2.1.0<br>该软件的运行平台/操作系统：Windows 10/11、Linux（Ubuntu 20.04+）<br>软件运行支撑环境/支持软件：Python 3.10、BentoML、PyTorch、Plotly |
-| 编程语言 | Python |
-| 源程序量 | 4500 行 |
+| 编程语言 | Python、HTML、CSS、JavaScript |
+| 源程序量 | 4876 行 |
 
 ### 主要功能和技术特点
 

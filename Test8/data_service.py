@@ -860,22 +860,26 @@ def get_dataset_overview():
     """
 
 
-def get_available_dates():
-    """获取可选日期列表"""
+def get_date_range():
+    """获取数据集的日期范围，返回 {min, max, total_days} 而非列出所有日期"""
     df = _get_data_for_exploration()
     if df is None:
-        return []
+        return {"min": "", "max": "", "total_days": 0}
     time_col = "timestamp" if "timestamp" in df.columns else "datetime"
     if time_col not in df.columns:
-        return []
+        return {"min": "", "max": "", "total_days": 0}
     dates = sorted(df[time_col].dt.date.unique())
-    return [str(d) for d in dates[:30]]
+    return {
+        "min": str(dates[0]),
+        "max": str(dates[-1]),
+        "total_days": len(dates),
+    }
 
 
-def plot_daily_load_curves(date_strs):
-    """绘制指定日期的负荷曲线（支持多日叠加）"""
+def plot_single_day_load(date_str: str = ""):
+    """绘制单日负荷曲线（聚焦模式）"""
     df = _get_data_for_exploration()
-    if df is None or not date_strs:
+    if df is None:
         return go.Figure()
 
     time_col = "timestamp" if "timestamp" in df.columns else "datetime"
@@ -887,66 +891,243 @@ def plot_daily_load_curves(date_strs):
         return go.Figure()
 
     df[time_col] = pd.to_datetime(df[time_col])
+    df = df.sort_values(time_col)
+
+    if not date_str:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="请选择一个日期", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    try:
+        day_start = pd.Timestamp(date_str).normalize()
+    except Exception:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="日期格式无效", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    day_end = day_start + pd.Timedelta(days=1)
+    day_df = df[(df[time_col] >= day_start) & (df[time_col] < day_end)]
 
     fig = go.Figure()
-    colors = ["#2196f3", "#f44336", "#4caf50", "#ff9800", "#9c27b0", "#00bcd4"]
+    if len(day_df) == 0:
+        fig.add_annotation(x=0.5, y=0.5, text=f"日期 {date_str} 无数据", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
 
-    for i, ds in enumerate(date_strs):
-        try:
-            d = pd.to_datetime(ds).date()
-            # 严格按日期和小时范围过滤：只取当天 00:00 ~ 23:59 的数据
-            day_mask = df[time_col].dt.date == d
-            day_df = df[day_mask].sort_values(time_col).copy()
-            if len(day_df) == 0:
-                continue
-
-            # 确保数据严格在当天范围内（排除跨天数据混入）
-            day_start = pd.Timestamp(d)
-            day_end = day_start + pd.Timedelta(days=1)
-            day_df = day_df[(day_df[time_col] >= day_start) & (day_df[time_col] < day_end)]
-
-            if len(day_df) == 0:
-                continue
-
-            # 使用连续的分钟索引作为 x 轴，避免首尾因"分类"x轴而产生的连线问题
-            day_df["minutes"] = day_df[time_col].dt.hour * 60 + day_df[time_col].dt.minute
-            times = day_df["minutes"].values / 60.0  # 转为小时 (0.0 ~ 23.75)
-
-            color = colors[i % len(colors)]
-
-            # 在 points > 1 且间隔过大时不连线，避免跨夜连接
-            connect_gaps = True
-            if len(day_df) > 1:
-                diff = np.diff(day_df["minutes"].values)
-                if np.any(diff > 60):  # 存在超过 1 小时的间隔
-                    connect_gaps = False
-
-            fig.add_trace(go.Scatter(
-                x=times,
-                y=day_df[load_col].values,
-                mode="lines+markers",
-                name=str(d),
-                line=dict(color=color, width=2),
-                marker=dict(size=3),
-                connectgaps=connect_gaps,
-            ))
-        except Exception as e:
-            print(f"[WARNING] 日期 {ds} 绘图失败: {e}")
+    times = day_df[time_col].dt.strftime("%H:%M")
+    fig.add_trace(go.Scatter(
+        x=times, y=day_df[load_col].values,
+        mode="lines",
+        name=day_start.strftime("%Y-%m-%d"),
+        line=dict(color="#2196f3", width=2.5),
+        fill="tozeroy",
+        fillcolor="rgba(33,150,243,0.1)",
+        hovertemplate=f"<b>{date_str}</b><br>时间: %{{x}}<br>负荷: %{{y:.1f}} kW<extra></extra>",
+    ))
 
     fig.update_layout(
-        title="历史日负荷曲线对比",
-        xaxis=dict(
-            title="当日时间 (小时)",
-            tickangle=0,
-            dtick=2,
-            range=[0, 24],
-            tickmode="linear",
-        ),
+        title=f"历史日负荷曲线 — {date_str}",
+        xaxis=dict(title="时刻", dtick=12),
+        yaxis=dict(title="负荷 (kW)"),
+        margin=dict(l=40, r=40, t=40, b=60),
+        template="plotly_white",
+        height=450,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def plot_aggregated_load(date_start: str = "", date_end: str = ""):
+    """绘制日期范围内的聚合负荷曲线（均值 ± 标准差阴影，不逐日列出）"""
+    df = _get_data_for_exploration()
+    if df is None:
+        return go.Figure()
+
+    time_col = "timestamp" if "timestamp" in df.columns else "datetime"
+    if time_col not in df.columns:
+        return go.Figure()
+
+    load_col = "load_kw"
+    if load_col not in df.columns:
+        return go.Figure()
+
+    df[time_col] = pd.to_datetime(df[time_col])
+    df = df.sort_values(time_col)
+
+    if not date_start or not date_end:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="请选择起始日期和结束日期", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    try:
+        start_ts = pd.Timestamp(date_start).normalize()
+        end_ts = pd.Timestamp(date_end).normalize()
+    except Exception:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="日期格式无效", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    if start_ts > end_ts:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="起始日期不能晚于结束日期", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    num_days = (end_ts - start_ts).days + 1
+    mask = (df[time_col] >= start_ts) & (df[time_col] < end_ts + pd.Timedelta(days=1))
+    range_df = df[mask].copy()
+
+    if len(range_df) == 0:
+        fig = go.Figure()
+        fig.add_annotation(x=0.5, y=0.5, text="所选日期范围无数据", showarrow=False, font=dict(size=14, color="#888"))
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    # 按 HH:MM 对齐，聚合统计
+    range_df["time_of_day"] = range_df[time_col].dt.strftime("%H:%M")
+    stats = range_df.groupby("time_of_day")[load_col].agg(["mean", "std"]).reset_index()
+    stats["upper"] = stats["mean"] + stats["std"]
+    stats["lower"] = (stats["mean"] - stats["std"]).clip(0)
+
+    fig = go.Figure()
+    # 标准差阴影
+    fig.add_trace(go.Scatter(
+        x=list(stats["time_of_day"]) + list(stats["time_of_day"])[::-1],
+        y=list(stats["upper"]) + list(stats["lower"])[::-1],
+        fill="toself",
+        fillcolor="rgba(33,150,243,0.2)",
+        line=dict(color="rgba(255,255,255,0)"),
+        name="±1σ",
+        showlegend=True,
+    ))
+    # 均值线
+    fig.add_trace(go.Scatter(
+        x=stats["time_of_day"], y=stats["mean"],
+        mode="lines",
+        name="日均值",
+        line=dict(color="#2196f3", width=2.5),
+        hovertemplate="时刻: %{x}<br>日均负荷: %{y:.1f} kW<extra></extra>",
+    ))
+
+    fig.update_layout(
+        title=f"聚合负荷曲线 ({date_start} ~ {date_end}, {num_days}天, 均值±1σ)",
+        xaxis=dict(title="时刻", dtick=12),
         yaxis=dict(title="负荷 (kW)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=40, r=40, t=40, b=60),
         template="plotly_white",
-        height=400,
+        height=450,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def plot_daily_load_curves(date_start: str = "", date_end: str = ""):
+    """绘制日期范围内的日负荷曲线（每条曲线代表一天，横轴为小时:分钟）"""
+    df = _get_data_for_exploration()
+    if df is None:
+        return go.Figure()
+
+    time_col = "timestamp" if "timestamp" in df.columns else "datetime"
+    if time_col not in df.columns:
+        return go.Figure()
+
+    load_col = "load_kw"
+    if load_col not in df.columns:
+        return go.Figure()
+
+    df[time_col] = pd.to_datetime(df[time_col])
+    df = df.sort_values(time_col)
+
+    # 从日期范围中推导所有日期
+    if not date_start or not date_end:
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.5, y=0.5, text="请选择起始日期和结束日期",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    try:
+        start_ts = pd.Timestamp(date_start).normalize()
+        end_ts = pd.Timestamp(date_end).normalize()
+    except Exception:
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.5, y=0.5, text="日期格式无效",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    if start_ts > end_ts:
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.5, y=0.5, text="起始日期不能晚于结束日期",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+        fig.update_layout(height=400, template="plotly_white")
+        return fig
+
+    # 限制最多 60 天，避免图表过于拥挤
+    max_days = 60
+    if (end_ts - start_ts).days + 1 > max_days:
+        end_ts = start_ts + pd.Timedelta(days=max_days - 1)
+
+    # 生成范围内的日期列表
+    dates = [start_ts + pd.Timedelta(days=i) for i in range((end_ts - start_ts).days + 1)]
+
+    # 为每个日期生成一条独立的曲线
+    fig = go.Figure()
+    colors = [
+        "#2196f3", "#ff9800", "#4caf50", "#e91e63", "#9c27b0",
+        "#00bcd4", "#ff5722", "#795548", "#607d8b", "#3f51b5",
+        "#8bc34a", "#ffc107", "#cddc39", "#03a9f4", "#f44336",
+    ]
+
+    for idx, day_start in enumerate(dates):
+        day_end = day_start + pd.Timedelta(days=1)
+        day_df = df[(df[time_col] >= day_start) & (df[time_col] < day_end)]
+
+        if len(day_df) == 0:
+            continue
+
+        # 横轴只用 HH:MM，让不同日期的曲线在同一 24h 尺度上对齐
+        times = day_df[time_col].dt.strftime("%H:%M")
+        color = colors[idx % len(colors)]
+        label = day_start.strftime("%m-%d")
+
+        fig.add_trace(go.Scatter(
+            x=times,
+            y=day_df[load_col].values,
+            mode="lines",
+            name=label,
+            line=dict(color=color, width=1.5),
+            connectgaps=False,
+            hovertemplate=f"<b>{label}</b><br>时间: %{{x}}<br>负荷: %{{y:.1f}} kW<extra></extra>",
+        ))
+
+    if len(fig.data) == 0:
+        fig.add_annotation(
+            x=0.5, y=0.5, text="所选日期范围无数据",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+
+    title_text = f"历史日负荷曲线 ({date_start} ~ {date_end})"
+    fig.update_layout(
+        title=title_text,
+        xaxis=dict(title="时刻", dtick=12),
+        yaxis=dict(title="负荷 (kW)"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=60),
+        template="plotly_white",
+        height=450,
+        hovermode="x unified",
     )
     return fig
 

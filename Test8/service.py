@@ -83,11 +83,24 @@ class SolarChargingDemo:
             wd = fetch_weather_data()
             summary_html = get_current_weather_summary(wd)
 
-            # 用 HTML 表格替代 DataFrame，避免 JSON 序列化问题
-            forecast_html = wd["forecast_df"].to_html(
-                index=False, classes="weather-table", border=0,
-                justify="center"
-            ) if wd and "forecast_df" in wd else ""
+            # 手动构建 HTML 表格，精确控制列宽比例
+            forecast_html = ""
+            if wd and "forecast_df" in wd:
+                df = wd["forecast_df"]
+                cols = list(df.columns)
+                rows = [[str(cell) for cell in row] for row in df.values.tolist()]
+                # colgroup: 时间8% | 辐照度12% | 云量10% | 降雨量14% | 天气56%
+                col_widths = ["8%", "12%", "10%", "14%", "56%"]
+                col_html = "".join(f'<col style="width:{w}">' for w in col_widths)
+                thead_html = "<tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr>"
+                tbody_html = "".join("<tr>" + "".join(f"<td>{v}</td>" for v in row) + "</tr>" for row in rows)
+                forecast_html = (
+                    f'<table id="forecast-table" class="weather-table">'
+                    f'<colgroup>{col_html}</colgroup>'
+                    f'<thead>{thead_html}</thead>'
+                    f'<tbody>{tbody_html}</tbody>'
+                    f'</table>'
+                )
 
             # 辐照度趋势图
             rad_chart = build_radiation_chart(wd) if wd else None
@@ -166,19 +179,41 @@ class SolarChargingDemo:
     @bentoml.api(route="/api/api_data_overview")
     async def get_api_data_overview(self, _body: str = "") -> dict:
         try:
-            from data_service import get_dataset_overview, get_available_dates
+            from data_service import get_dataset_overview, get_date_range
             overview_html = get_dataset_overview()
-            dates = get_available_dates()
-            return {"success": True, "overview_html": overview_html, "dates": dates}
+            date_range = get_date_range()
+            return {"success": True, "overview_html": overview_html, "date_range": date_range}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e), "chart": _error_chart(str(e))}
+
+    @bentoml.api(route="/api/api_single_day_load")
+    async def get_api_single_day_load(self, date: str = "") -> dict:
+        try:
+            from data_service import plot_single_day_load
+            fig = plot_single_day_load(date)
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e), "chart": _error_chart(str(e))}
+
+    @bentoml.api(route="/api/api_aggregated_load")
+    async def get_api_aggregated_load(self, date_start: str = "", date_end: str = "") -> dict:
+        try:
+            from data_service import plot_aggregated_load
+            fig = plot_aggregated_load(date_start, date_end)
+            from plotly.utils import PlotlyJSONEncoder
+            return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
         except Exception as e:
             traceback.print_exc()
             return {"success": False, "error": str(e), "chart": _error_chart(str(e))}
 
     @bentoml.api(route="/api/api_daily_load")
-    async def get_api_daily_load(self, dates: list = None) -> dict:
+    async def get_api_daily_load(self, date_start: str = "", date_end: str = "") -> dict:
         try:
             from data_service import plot_daily_load_curves
-            fig = plot_daily_load_curves(dates or [])
+            fig = plot_daily_load_curves(date_start, date_end)
             from plotly.utils import PlotlyJSONEncoder
             return {"success": True, "chart": json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))}
         except Exception as e:
@@ -277,22 +312,8 @@ class SolarChargingDemo:
             return {"success": False, "error": str(e), "chart": _error_chart(str(e))}
 
     # ============================================================
-    # 模型信息
+    # 挂载静态文件 ASGI 应用 (路径: /)
     # ============================================================
-    @bentoml.api(route="/api/api_model_info")
-    async def get_api_model_info(self, _body: str = "") -> dict:
-        try:
-            from data_service import get_charging_model_info
-            info = get_charging_model_info()
-            return {"success": True, "info": info}
-        except Exception as e:
-            traceback.print_exc()
-            return {"success": False, "error": str(e)}
-
-
-# ============================================================
-# 挂载静态文件 ASGI 应用 (路径: /)
-# ============================================================
 try:
     from starlette.staticfiles import StaticFiles
     from starlette.applications import Starlette

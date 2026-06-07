@@ -27,7 +27,7 @@ def fetch_weather_data(lat=LATITUDE, lon=LONGITUDE):
         "longitude": lon,
         "current": "temperature_2m,shortwave_radiation,cloudcover,rain",
         "minutely_15": "shortwave_radiation,cloudcover,rain",
-        "forecast_days": 1,
+        "forecast_days": 2,
         "timezone": "Asia/Shanghai",
     }
     try:

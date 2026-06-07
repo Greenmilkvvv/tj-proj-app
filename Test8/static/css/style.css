@@ -86,8 +86,9 @@ body {
   letter-spacing: 0.5px;
 }
 
-.header-right { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--text-secondary); }
-.sep { color: var(--border-color); }
+.header-right { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--text-secondary); flex-shrink: 0; }
+.sep { color: var(--border-color); flex-shrink: 0; }
+#header-status, #header-time { white-space: nowrap; }
 
 #theme-select {
   background: var(--bg-input);
@@ -233,7 +234,7 @@ select[multiple] {
 /* ---------- KPI 卡片 ---------- */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
 
@@ -315,7 +316,21 @@ select[multiple] {
 .weather-card th {
   font-weight: 600;
   color: var(--text-secondary);
-  width: 40%;
+}
+
+/* 未来3h预报表格：列宽由后端 colgroup 控制，CSS 只负责装饰 */
+#forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+#forecast-table th,
+#forecast-table td {
+  text-align: center;
+  padding: 6px 4px;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border-color);
 }
 
 /* ---------- 错误提示 ---------- */
@@ -521,6 +536,47 @@ select[multiple] {
 .md-table th {
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+/* ---------- 策略建议表格 ---------- */
+.strategy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin: 12px 0;
+}
+
+.strategy-table th,
+.strategy-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.strategy-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  position: sticky;
+  top: 0;
+}
+
+.strategy-table tbody tr:hover {
+  background: var(--accent-light);
+}
+
+.action-charge {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.action-discharge {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.action-idle {
+  color: var(--text-muted);
 }
 
 /* ---------- 响应式 ---------- */

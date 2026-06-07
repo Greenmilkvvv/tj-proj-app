@@ -331,6 +331,8 @@ def _mock_prediction(n_steps, weather):
     total_solar = np.sum(solar) * 0.25
     total_load = np.sum(load) * 0.25
     green_ratio = total_solar / total_load * 100 if total_load > 0 else 100
+    green_ratio = min(green_ratio, 100.0)
+    surplus_power = max(total_solar - total_load, 0)
     solar_peak_idx = np.argmax(solar)
     load_peak_idx = np.argmax(load)
     return {
@@ -338,6 +340,7 @@ def _mock_prediction(n_steps, weather):
         "load_mean": load, "load_lower": load * 0.95, "load_upper": load * 1.05,
         "total_solar": total_solar, "total_load": total_load,
         "green_ratio": green_ratio,
+        "surplus_power": surplus_power,
         "solar_peak": solar[solar_peak_idx],
         "solar_peak_time": times[solar_peak_idx],
         "load_peak": load[load_peak_idx],
@@ -373,6 +376,8 @@ def _real_prediction(n_steps, weather, current_price=None, current_load=None):
     total_solar = np.sum(solar) * 0.25
     total_load = np.sum(load_mean) * 0.25
     green_ratio = total_solar / total_load * 100 if total_load > 0 else 100
+    green_ratio = min(green_ratio, 100.0)
+    surplus_power = max(total_solar - total_load, 0)
     solar_peak_idx = np.argmax(solar)
     load_peak_idx = np.argmax(load_mean)
 
@@ -381,6 +386,7 @@ def _real_prediction(n_steps, weather, current_price=None, current_load=None):
         "load_mean": load_mean, "load_lower": load_lower, "load_upper": load_upper,
         "total_solar": total_solar, "total_load": total_load,
         "green_ratio": green_ratio,
+        "surplus_power": surplus_power,
         "solar_peak": solar[solar_peak_idx],
         "solar_peak_time": times[solar_peak_idx],
         "load_peak": load_mean[load_peak_idx],
@@ -755,6 +761,8 @@ def get_combined_prediction(solar_result, charging_result, n_steps=4):
         total_solar = np.sum(solar_vals) * 0.25
         total_load = np.sum(load_vals) * 0.25
         green_ratio = total_solar / total_load * 100 if total_load > 0 else 100
+        green_ratio = min(green_ratio, 100.0)
+        surplus_power = max(total_solar - total_load, 0)
         solar_peak_idx = np.argmax(solar_vals)
         load_peak_idx = np.argmax(load_vals)
 
@@ -767,6 +775,7 @@ def get_combined_prediction(solar_result, charging_result, n_steps=4):
             "total_solar": total_solar,
             "total_load": total_load,
             "green_ratio": green_ratio,
+            "surplus_power": surplus_power,
             "solar_peak": solar_vals[solar_peak_idx],
             "solar_peak_time": times[solar_peak_idx],
             "load_peak": load_vals[load_peak_idx],

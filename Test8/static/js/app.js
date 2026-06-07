@@ -13,7 +13,7 @@ const STATE = {
   dataOverview: null,
   availableDates: [],
   backtestType: null, // 'charging' | 'solar'
-  modelInfo: null,
+  strategyData: null,
   // 缓存服务端图表原始 JSON，用于主题切换时重绘
   serverCharts: {},
 };
@@ -32,19 +32,19 @@ document.addEventListener('DOMContentLoaded', () => {
   initDataTab();
   initErrorTab();
   initWeatherTab();
-  initInfoTab();
+  initStrategyTab();
 
-  // 默认加载（不展示数据概览，只加载日期列表）
-  setTimeout(loadAvailableDates, 200);
+  // 默认加载
   setTimeout(loadWeather, 400);
-  setTimeout(loadModelInfo, 600);
 });
 
 // ──────────────────────────────────────────────
 // 通用工具函数
 // ──────────────────────────────────────────────
 function $(id) {
-  return document.getElementById(id);
+  const el = document.getElementById(id);
+  if (!el) console.warn(`[app] Element not found: #${id}`);
+  return el;
 }
 
 function apiCall(endpoint, params = {}) {
@@ -104,6 +104,7 @@ function markdownToHTML(md) {
 function setFooter(msg, ok = true) {
   const el = $('footer-api-status');
   const msgEl = $('footer-msg');
+  if (!el || !msgEl) return;
   if (ok) {
     el.innerHTML = '🟢 API: 正常';
     el.style.color = 'var(--success)';
@@ -116,22 +117,44 @@ function setFooter(msg, ok = true) {
 
 function showError(boxId, msg) {
   const box = $(boxId);
+  if (!box) return;
   box.textContent = msg;
   box.classList.remove('hidden');
 }
 
 function hideError(boxId) {
-  $(boxId).classList.add('hidden');
+  const el = $(boxId);
+  if (el) el.classList.add('hidden');
 }
 
 function disableBtn(id) {
-  $(id).disabled = true;
-  $(id).textContent = '⏳ 处理中…';
+  const el = $(id);
+  if (!el) return;
+  el.disabled = true;
+  el.textContent = '⏳ 处理中…';
 }
 
 function enableBtn(id, text) {
-  $(id).disabled = false;
-  $(id).textContent = text;
+  const el = $(id);
+  if (!el) return;
+  el.disabled = false;
+  el.textContent = text;
+}
+
+/**
+ * 安全设置 textContent
+ */
+function safeText(id, text) {
+  const el = $(id);
+  if (el) el.textContent = text;
+}
+
+/**
+ * 安全设置 innerHTML
+ */
+function safeHTML(id, html) {
+  const el = $(id);
+  if (el) el.innerHTML = html;
 }
 
 /**
@@ -167,6 +190,7 @@ function plotlyLayout(title, xlabel, ylabel, extra = {}) {
 // ──────────────────────────────────────────────
 function initTheme() {
   const select = $('theme-select');
+  if (!select) return;
   select.value = STATE.theme;
   document.documentElement.setAttribute('data-theme', STATE.theme);
 
@@ -177,6 +201,7 @@ function initTheme() {
   });
 
   const mobileBtn = $('theme-toggle-mobile');
+  if (!mobileBtn) return;
   mobileBtn.addEventListener('click', () => {
     STATE.theme = STATE.theme === 'dark' ? 'light' : 'dark';
     select.value = STATE.theme;
@@ -196,7 +221,7 @@ function redrawAllCharts() {
   if (STATE.currentTab === 'tab-data') loadDataTabCharts();
   if (STATE.currentTab === 'tab-error') loadErrorTabCharts();
   if (STATE.currentTab === 'tab-weather') loadWeather();
-  if (STATE.currentTab === 'tab-info') loadModelInfo();
+  if (STATE.currentTab === 'tab-strategy') renderStrategyDisplay();
 }
 
 // ──────────────────────────────────────────────
@@ -205,7 +230,8 @@ function redrawAllCharts() {
 function initClock() {
   function tick() {
     const now = new Date();
-    $('header-time').textContent = now.toLocaleString('zh-CN');
+    const el = $('header-time');
+    if (el) el.textContent = now.toLocaleString('zh-CN');
   }
   tick();
   setInterval(tick, 1000);
@@ -238,6 +264,7 @@ function switchTab(tabId) {
   setTimeout(() => {
     if (tabId === 'tab-data') loadDataTabCharts();
     if (tabId === 'tab-error') loadErrorTabCharts();
+    if (tabId === 'tab-weather') Plotly.Plots.resize('weather-chart');
   }, 100);
 }
 
@@ -252,21 +279,33 @@ function initPredictTab() {
     dp.value = today.toISOString().slice(0, 10);
   }
 
-  $('btn-predict').addEventListener('click', runPrediction);
+  const btnPredict = $('btn-predict');
+  if (btnPredict) btnPredict.addEventListener('click', runPrediction);
 }
 
 async function runPrediction() {
-  const btn = $('btn-predict');
   disableBtn('btn-predict');
   hideError('predict-error');
-  $('chart-solar-only').innerHTML = '<div class="spinner"></div>';
-  $('chart-charging-only').innerHTML = '<div class="spinner"></div>';
-  $('chart-joint').innerHTML = '<div class="spinner"></div>';
+  const solarDiv = $('chart-solar-only');
+  const chargingDiv = $('chart-charging-only');
+  const jointDiv = $('chart-joint');
+  if (solarDiv) solarDiv.innerHTML = '<div class="spinner"></div>';
+  if (chargingDiv) chargingDiv.innerHTML = '<div class="spinner"></div>';
+  if (jointDiv) jointDiv.innerHTML = '<div class="spinner"></div>';
 
-  const model = $('model-select').value;
-  const nSteps = parseInt($('steps-select').value);
-  const price = parseFloat($('price-input').value);
-  const load = parseFloat($('load-input').value);
+  const modelSel = $('model-select');
+  const stepsSel = $('steps-select');
+  const priceInput = $('price-input');
+  const loadInput = $('load-input');
+  if (!modelSel || !stepsSel || !priceInput || !loadInput) {
+    showError('predict-error', '表单元素缺失，请刷新页面');
+    enableBtn('btn-predict', '🔬 执行预测');
+    return;
+  }
+  const model = modelSel.value;
+  const nSteps = parseInt(stepsSel.value);
+  const price = parseFloat(priceInput.value);
+  const load = parseFloat(loadInput.value);
 
   try {
     const data = await apiCall('api_predict', {
@@ -278,9 +317,9 @@ async function runPrediction() {
 
     if (!data.success) {
       showError('predict-error', data.error || '预测失败');
-      $('chart-solar-only').textContent = '预测失败';
-      $('chart-charging-only').textContent = '预测失败';
-      $('chart-joint').textContent = '预测失败';
+      if (solarDiv) solarDiv.textContent = '预测失败';
+      if (chargingDiv) chargingDiv.textContent = '预测失败';
+      if (jointDiv) jointDiv.textContent = '预测失败';
       resetKPIs();
       setFooter(data.error || '预测失败', false);
     } else {
@@ -290,14 +329,15 @@ async function runPrediction() {
       renderChargingOnlyChart(data);
       renderJointChart(data);
       setFooter('预测完成', true);
-      $('header-status').innerHTML = '✅ 预测就绪';
+      const hs = $('header-status');
+      if (hs) hs.innerHTML = '✅ 预测就绪';
     }
   } catch (e) {
     console.error(e);
     showError('predict-error', e.message);
-    $('chart-solar-only').textContent = '请求失败';
-    $('chart-charging-only').textContent = '请求失败';
-    $('chart-joint').textContent = '请求失败';
+    if (solarDiv) solarDiv.textContent = '请求失败';
+    if (chargingDiv) chargingDiv.textContent = '请求失败';
+    if (jointDiv) jointDiv.textContent = '请求失败';
     resetKPIs();
     setFooter(e.message, false);
   } finally {
@@ -310,6 +350,7 @@ async function runPrediction() {
 // ──────────────────────────────────────────────
 function renderSolarOnlyChart(data) {
   const div = $('chart-solar-only');
+  if (!div) return;
   div.innerHTML = '';
   Plotly.purge('chart-solar-only');
   const traces = [
@@ -334,6 +375,7 @@ function renderSolarOnlyChart(data) {
 // ──────────────────────────────────────────────
 function renderChargingOnlyChart(data) {
   const div = $('chart-charging-only');
+  if (!div) return;
   div.innerHTML = '';
   Plotly.purge('chart-charging-only');
   const fillColor = STATE.theme === 'dark' ? 'rgba(59,130,246,0.2)' : 'rgba(37,99,235,0.15)';
@@ -369,6 +411,7 @@ function renderChargingOnlyChart(data) {
 // ──────────────────────────────────────────────
 function renderJointChart(data) {
   const div = $('chart-joint');
+  if (!div) return;
   div.innerHTML = '';
   Plotly.purge('chart-joint');
 
@@ -489,21 +532,20 @@ function renderJointChart(data) {
 }
 
 function updateKPIs(data) {
-  $('kpi-total-solar-value').textContent = data.total_solar ? data.total_solar.toFixed(1) : '--';
-  $('kpi-total-load-value').textContent = data.total_load ? data.total_load.toFixed(1) : '--';
-  $('kpi-green-ratio-value').textContent = data.green_ratio ? (data.green_ratio * 100).toFixed(1) : '--';
-  $('kpi-solar-peak-value').textContent = data.solar_peak ? data.solar_peak.toFixed(1) : '--';
+  safeText('kpi-total-solar-value', data.total_solar ? data.total_solar.toFixed(1) : '--');
+  safeText('kpi-total-load-value', data.total_load ? data.total_load.toFixed(1) : '--');
+  safeText('kpi-solar-peak-value', data.solar_peak ? data.solar_peak.toFixed(1) : '--');
 }
 
 function resetKPIs() {
-  $('kpi-total-solar-value').textContent = '--';
-  $('kpi-total-load-value').textContent = '--';
-  $('kpi-green-ratio-value').textContent = '--';
-  $('kpi-solar-peak-value').textContent = '--';
+  safeText('kpi-total-solar-value', '--');
+  safeText('kpi-total-load-value', '--');
+  safeText('kpi-solar-peak-value', '--');
 }
 
 function renderPredictChart1(data) {
   const div = $('chart-predict-1');
+  if (!div) return;
   div.innerHTML = '';  // 确保清除 spinner（Plotly.purge 在无图表时不清理 DOM）
   Plotly.purge('chart-predict-1');
   const traces = [
@@ -532,6 +574,7 @@ function renderPredictChart1(data) {
 
 function renderPredictChart2(data) {
   const div = $('chart-predict-2');
+  if (!div) return;
   div.innerHTML = '';  // 确保清除 spinner
   Plotly.purge('chart-predict-2');
   const fillColor = STATE.theme === 'dark' ? 'rgba(59,130,246,0.2)' : 'rgba(37,99,235,0.15)';
@@ -562,10 +605,11 @@ function renderPredictChart2(data) {
 
 function renderStrategyChart(data) {
   const div = $('chart-strategy');
+  if (!div) return;
   div.innerHTML = '';  // 确保清除 spinner
   Plotly.purge('chart-strategy');
   if (!data.strategy || !data.strategy.length) {
-    $('chart-strategy').textContent = '无调度策略数据';
+    div.textContent = '无调度策略数据';
     return;
   }
   const times = data.strategy.map(s => s.time);
@@ -609,14 +653,15 @@ function renderStrategyChart(data) {
     },
   ];
 
+  const maxVal = Math.max(...solarVals, ...loadVals) || 1;
   const layout = plotlyLayout('充放电调度策略', '时间', '功率 (kW)', {
     barmode: 'group',
     shapes: times.map((t, i) => ({
       type: 'rect',
       x0: i - 0.4,
       x1: i + 0.4,
-      y0: Math.max(...solarVals, ...loadVals) * 1.05,
-      y1: Math.max(...solarVals, ...loadVals) * 1.12,
+      y0: maxVal * 1.05,
+      y1: maxVal * 1.12,
       fillcolor: actionColors[i],
       opacity: 0.7,
       line: { width: 0 },
@@ -639,74 +684,171 @@ function renderStrategyChart(data) {
 // ──────────────────────────────────────────────
 // Tab 2: 数据探索
 // ──────────────────────────────────────────────
-function initDataTab() {
-  $('btn-load-daily').addEventListener('click', loadDailyLoadChart);
-  $('btn-select-all-dates').addEventListener('click', () => setAllDatesCheckboxes(true));
-  $('btn-deselect-all-dates').addEventListener('click', () => setAllDatesCheckboxes(false));
+let _dataOverviewLoaded = false;
+
+/**
+ * 安全绑定事件：元素存在时才 addEventListener
+ */
+function safeOn(id, event, handler) {
+  const el = $(id);
+  if (el) el.addEventListener(event, handler);
 }
 
-async function loadAvailableDates() {
+async function initDataTab() {
+  const dailyModeRadios = document.querySelectorAll('input[name="daily-mode"]');
+
+  // 模式切换
+  dailyModeRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      const mode = document.querySelector('input[name="daily-mode"]:checked')?.value;
+      if (mode === 'aggregated') {
+        const rg = $('daily-range-group');
+        const sg = $('daily-single-group');
+        if (rg) rg.style.display = 'flex';
+        if (sg) sg.style.display = 'none';
+        loadAggregatedLoadChart();
+      } else {
+        const rg = $('daily-range-group');
+        const sg = $('daily-single-group');
+        if (rg) rg.style.display = 'none';
+        if (sg) sg.style.display = 'flex';
+        loadSingleDayLoadChart();
+      }
+    });
+  });
+
+  // 聚合模式：快捷按钮 + 日期变更自动刷新
+  safeOn('btn-week', 'click', () => setDateRange('week'));
+  safeOn('btn-month', 'click', () => setDateRange('month'));
+  safeOn('btn-last-7-days', 'click', () => setDateRange('7d'));
+  safeOn('btn-last-30-days', 'click', () => setDateRange('30d'));
+
+  let dateChangeTimer = null;
+  ['daily-start-date', 'daily-end-date'].forEach(id => {
+    safeOn(id, 'change', () => {
+      clearTimeout(dateChangeTimer);
+      dateChangeTimer = setTimeout(loadAggregatedLoadChart, 400);
+    });
+  });
+
+  // 单日模式：快捷按钮 + 手动日期变更
+  safeOn('btn-daily-yesterday', 'click', () => setSingleDate(-1));
+  safeOn('btn-daily-today', 'click', () => setSingleDate(0));
+  safeOn('btn-daily-prev', 'click', () => shiftSingleDate(-1));
+  safeOn('btn-daily-next', 'click', () => shiftSingleDate(1));
+
+  safeOn('daily-single-date', 'change', () => {
+    clearTimeout(dateChangeTimer);
+    dateChangeTimer = setTimeout(loadSingleDayLoadChart, 400);
+  });
+
+  // 页面初始化：从后端获取数据默认范围
+  if (!_dataOverviewLoaded) {
+    await loadDataOverview();
+    _dataOverviewLoaded = true;
+  }
+
+  // 默认用聚合均值模式，初始加载近7天
+  const startVal = $('daily-start-date')?.value;
+  const endVal = $('daily-end-date')?.value;
+  if (startVal && endVal) {
+    loadAggregatedLoadChart();
+  } else {
+    setDateRange('7d');
+  }
+}
+
+async function loadDataOverview() {
   try {
     const data = await apiCall('api_data_overview');
-    if (data.success) {
-      STATE.availableDates = data.dates || [];
-      renderDateCheckboxes();
-      setFooter('日期列表加载完成', true);
-    } else {
-      setFooter(data.error || '加载日期列表失败', false);
+    if (data.success && data.date_range) {
+      const dr = data.date_range;
+      // 填充聚合日期范围输入框
+      const startInput = $('daily-start-date');
+      const endInput = $('daily-end-date');
+      const singleDate = $('daily-single-date');
+      if (startInput) startInput.value = dr.min;
+      if (endInput) endInput.value = dr.max;
+      if (singleDate) singleDate.value = dr.max;
+      // 显示日期范围提示
+      const hint = $('daily-date-range-hint');
+      if (hint) {
+        hint.textContent = `数据范围: ${dr.min} ~ ${dr.max} (共 ${dr.total_days} 天)`;
+      }
     }
   } catch (e) {
-    console.error(e);
-    setFooter(e.message, false);
+    console.warn('loadDataOverview failed:', e);
+    // 降级：用今天日期作为默认
+    setDateRange('7d');
   }
 }
 
-function renderDateCheckboxes() {
-  const container = $('date-checkbox-list');
-  if (!container) return;
-  const dates = STATE.availableDates;
-  if (!dates.length) {
-    container.innerHTML = '<p class="hint-text">暂无可用日期</p>';
-    return;
+function setDateRange(preset) {
+  const startInput = $('daily-start-date');
+  const endInput = $('daily-end-date');
+  if (!endInput || !startInput) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let start = new Date(today);
+  let end = new Date(today);
+
+  switch (preset) {
+    case 'week':
+      // 本周一 ~ 今天
+      const dayOfWeek = today.getDay();
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      start = new Date(today);
+      start.setDate(today.getDate() + mondayOffset);
+      break;
+    case 'month':
+      // 本月1日 ~ 今天
+      start = new Date(today.getFullYear(), today.getMonth(), 1);
+      break;
+    case '30d':
+      start.setDate(today.getDate() - 29);
+      break;
+    case '7d':
+    default:
+      start.setDate(today.getDate() - 6);
+      break;
   }
-  let html = '';
-  dates.forEach(d => {
-    html += `<label class="date-checkbox-label"><input type="checkbox" class="date-checkbox" value="${d}"> ${d}</label>`;
-  });
-  container.innerHTML = html;
-  container.querySelectorAll('.date-checkbox').forEach(cb => {
-    cb.addEventListener('change', updateDateCountHint);
-  });
-  updateDateCountHint();
+
+  startInput.value = start.toISOString().slice(0, 10);
+  endInput.value = end.toISOString().slice(0, 10);
+
+  loadAggregatedLoadChart();
 }
 
-function setAllDatesCheckboxes(checked) {
-  document.querySelectorAll('.date-checkbox').forEach(cb => {
-    cb.checked = checked;
-  });
-  updateDateCountHint();
+function setSingleDate(offsetDays) {
+  const input = $('daily-single-date');
+  if (!input) return;
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + offsetDays);
+  input.value = d.toISOString().slice(0, 10);
+  loadSingleDayLoadChart();
 }
 
-function getSelectedDates() {
-  return Array.from(document.querySelectorAll('.date-checkbox:checked')).map(cb => cb.value);
-}
-
-function updateDateCountHint() {
-  const count = getSelectedDates().length;
-  const hint = $('date-count-hint');
-  if (hint) hint.textContent = `已选 ${count} 个日期`;
+function shiftSingleDate(step) {
+  const input = $('daily-single-date');
+  if (!input || !input.value) return;
+  const d = new Date(input.value + 'T00:00:00');
+  d.setDate(d.getDate() + step);
+  input.value = d.toISOString().slice(0, 10);
+  loadSingleDayLoadChart();
 }
 
 function loadDataTabCharts() {
   // 优先从缓存重绘，否则首次加载
   if (STATE.serverCharts['chart-correlation']) {
     renderChartFromServer('chart-correlation', STATE.serverCharts['chart-correlation']);
-  } else if (!document.getElementById('chart-correlation').dataset.loaded) {
+  } else if (!document.getElementById('chart-correlation')?.dataset?.loaded) {
     loadCorrelationChart();
   }
   if (STATE.serverCharts['chart-hourly-profile']) {
     renderChartFromServer('chart-hourly-profile', STATE.serverCharts['chart-hourly-profile']);
-  } else if (!document.getElementById('chart-hourly-profile').dataset.loaded) {
+  } else if (!document.getElementById('chart-hourly-profile')?.dataset?.loaded) {
     loadHourlyProfileChart();
   }
   if (STATE.serverCharts['chart-daily-load']) {
@@ -714,63 +856,95 @@ function loadDataTabCharts() {
   }
 }
 
-async function loadDailyLoadChart() {
-  const dates = getSelectedDates();
-  if (!dates.length) {
-    alert('请至少选择一个日期');
+// ─── 聚合均值模式 ──────────────────────────
+async function loadAggregatedLoadChart() {
+  const startInput = $('daily-start-date');
+  const endInput = $('daily-end-date');
+  if (!startInput || !endInput) return;
+  const dateStart = startInput.value;
+  const dateEnd = endInput.value;
+  if (!dateStart || !dateEnd) {
+    safeText('chart-daily-load', '请选择起始日期和结束日期');
     return;
   }
-  $('chart-daily-load').innerHTML = '<div class="spinner"></div>';
+  if (dateStart > dateEnd) {
+    safeText('chart-daily-load', '起始日期不能晚于结束日期');
+    return;
+  }
+  safeHTML('chart-daily-load', '<div class="spinner"></div>');
   try {
-    const data = await apiCall('api_daily_load', { dates });
-    if (data.success && data.chart) {
+    const data = await apiCall('api_aggregated_load', { date_start: dateStart, date_end: dateEnd });
+    if (data.chart) {
       renderChartFromServer('chart-daily-load', data.chart, true);
-    } else if (data.chart) {
-      renderChartFromServer('chart-daily-load', data.chart, true);  // fallback 错误图表
     } else {
-      $('chart-daily-load').textContent = data.error || '加载失败';
+      safeText('chart-daily-load', data.error || '加载失败');
     }
   } catch (e) {
     console.error(e);
-    $('chart-daily-load').textContent = '加载失败: ' + e.message;
+    safeText('chart-daily-load', '加载失败: ' + e.message);
+  }
+}
+
+// ─── 单日聚焦模式 ──────────────────────────
+async function loadSingleDayLoadChart() {
+  const input = $('daily-single-date');
+  if (!input || !input.value) {
+    safeText('chart-daily-load', '请选择一个日期');
+    return;
+  }
+  safeHTML('chart-daily-load', '<div class="spinner"></div>');
+  try {
+    const data = await apiCall('api_single_day_load', { date: input.value });
+    if (data.chart) {
+      renderChartFromServer('chart-daily-load', data.chart, true);
+    } else {
+      safeText('chart-daily-load', data.error || '加载失败');
+    }
+  } catch (e) {
+    console.error(e);
+    safeText('chart-daily-load', '加载失败: ' + e.message);
   }
 }
 
 async function loadCorrelationChart() {
-  $('chart-correlation').innerHTML = '<div class="spinner"></div>';
+  safeHTML('chart-correlation', '<div class="spinner"></div>');
   try {
     const data = await apiCall('api_correlation');
     if (data.success && data.chart) {
       renderChartFromServer('chart-correlation', data.chart, true);
-      document.getElementById('chart-correlation').dataset.loaded = '1';
+      const el = document.getElementById('chart-correlation');
+      if (el) el.dataset.loaded = '1';
     } else if (data.chart) {
       renderChartFromServer('chart-correlation', data.chart, true);  // fallback 错误图表
-      document.getElementById('chart-correlation').dataset.loaded = '1';
+      const el = document.getElementById('chart-correlation');
+      if (el) el.dataset.loaded = '1';
     } else {
-      $('chart-correlation').textContent = data.error || '无数据';
+      safeText('chart-correlation', data.error || '无数据');
     }
   } catch (e) {
     console.error(e);
-    $('chart-correlation').textContent = '加载失败';
+    safeText('chart-correlation', '加载失败');
   }
 }
 
 async function loadHourlyProfileChart() {
-  $('chart-hourly-profile').innerHTML = '<div class="spinner"></div>';
+  safeHTML('chart-hourly-profile', '<div class="spinner"></div>');
   try {
     const data = await apiCall('api_hourly_profile');
     if (data.success && data.chart) {
       renderChartFromServer('chart-hourly-profile', data.chart, true);
-      document.getElementById('chart-hourly-profile').dataset.loaded = '1';
+      const el = document.getElementById('chart-hourly-profile');
+      if (el) el.dataset.loaded = '1';
     } else if (data.chart) {
       renderChartFromServer('chart-hourly-profile', data.chart, true);  // fallback 错误图表
-      document.getElementById('chart-hourly-profile').dataset.loaded = '1';
+      const el = document.getElementById('chart-hourly-profile');
+      if (el) el.dataset.loaded = '1';
     } else {
-      $('chart-hourly-profile').textContent = data.error || '无数据';
+      safeText('chart-hourly-profile', data.error || '无数据');
     }
   } catch (e) {
     console.error(e);
-    $('chart-hourly-profile').textContent = '加载失败';
+    safeText('chart-hourly-profile', '加载失败');
   }
 }
 
@@ -858,8 +1032,8 @@ function renderChartFromServer(divId, chartData, cache = false) {
 // Tab 3: 误差分析
 // ──────────────────────────────────────────────
 function initErrorTab() {
-  $('btn-backtest-charging').addEventListener('click', () => runBacktest('charging'));
-  $('btn-backtest-solar').addEventListener('click', () => runBacktest('solar'));
+  safeOn('btn-backtest-charging', 'click', () => runBacktest('charging'));
+  safeOn('btn-backtest-solar', 'click', () => runBacktest('solar'));
 }
 
 function loadErrorTabCharts() {
@@ -873,10 +1047,10 @@ async function runBacktest(type) {
   const hourlyDiv = $('chart-error-hourly');
   const summaryDiv = $('error-summary');
 
-  chartDiv.innerHTML = '<div class="spinner"></div>';
-  errorDiv.innerHTML = '<div class="spinner"></div>';
-  hourlyDiv.innerHTML = '<div class="spinner"></div>';
-  summaryDiv.innerHTML = '<p>加载中…</p>';
+  if (chartDiv) chartDiv.innerHTML = '<div class="spinner"></div>';
+  if (errorDiv) errorDiv.innerHTML = '<div class="spinner"></div>';
+  if (hourlyDiv) hourlyDiv.innerHTML = '<div class="spinner"></div>';
+  if (summaryDiv) summaryDiv.innerHTML = '<p>加载中…</p>';
 
   const endpoint = type === 'charging' ? 'api_backtest_charging' : 'api_backtest_solar';
   const errDistEp = type === 'charging' ? 'api_charging_error_dist' : 'api_solar_error_dist';
@@ -892,21 +1066,18 @@ async function runBacktest(type) {
     // 渲染回测主图表
     if (btData.success && btData.chart) {
       renderChartFromServer('chart-backtest', btData.chart, true);
-      if (btData.summary) {
-        summaryDiv.innerHTML = markdownToHTML(btData.summary);
-      } else {
-        summaryDiv.innerHTML = '<p>无误差指标数据</p>';
+      if (summaryDiv) {
+        summaryDiv.innerHTML = btData.summary ? markdownToHTML(btData.summary) : '<p>无误差指标数据</p>';
       }
     } else if (btData.chart) {
       // fallback 错误图表
       renderChartFromServer('chart-backtest', btData.chart, true);
-      summaryDiv.innerHTML = `<p class="error">${btData.error || '回测失败'}</p>`;
+      if (summaryDiv) summaryDiv.innerHTML = `<p class="error">${btData.error || '回测失败'}</p>`;
     } else {
-      chartDiv.innerHTML = '';  // 清除 spinner
-      chartDiv.textContent = btData.error || '回测失败';
-      errorDiv.innerHTML = '';
-      hourlyDiv.innerHTML = '';
-      summaryDiv.innerHTML = `<p class="error">${btData.error || '回测失败'}</p>`;
+      if (chartDiv) { chartDiv.innerHTML = ''; chartDiv.textContent = btData.error || '回测失败'; }
+      if (errorDiv) errorDiv.innerHTML = '';
+      if (hourlyDiv) hourlyDiv.innerHTML = '';
+      if (summaryDiv) summaryDiv.innerHTML = `<p class="error">${btData.error || '回测失败'}</p>`;
     }
 
     // 渲染误差分布图
@@ -915,7 +1086,7 @@ async function runBacktest(type) {
     } else if (distData.chart) {
       // fallback 错误图表
       renderChartFromServer('chart-error-dist', distData.chart, true);
-    } else if (distData.error) {
+    } else if (distData.error && errorDiv) {
       errorDiv.innerHTML = '';
       errorDiv.textContent = distData.error;
     }
@@ -926,16 +1097,16 @@ async function runBacktest(type) {
     } else if (hourlyData.chart) {
       // fallback 错误图表
       renderChartFromServer('chart-error-hourly', hourlyData.chart, true);
-    } else if (hourlyData.error) {
+    } else if (hourlyData.error && hourlyDiv) {
       hourlyDiv.innerHTML = '';
       hourlyDiv.textContent = hourlyData.error;
     }
     setFooter(`${type === 'charging' ? '充电' : '光伏'}回测完成`, true);
   } catch (e) {
     console.error(e);
-    chartDiv.textContent = '回测失败';
-    errorDiv.textContent = '请求失败';
-    hourlyDiv.textContent = '请求失败';
+    if (chartDiv) chartDiv.textContent = '回测失败';
+    if (errorDiv) errorDiv.textContent = '请求失败';
+    if (hourlyDiv) hourlyDiv.textContent = '请求失败';
     setFooter(e.message, false);
   }
 }
@@ -944,11 +1115,12 @@ async function runBacktest(type) {
 // Tab 4: 气象数据
 // ──────────────────────────────────────────────
 function initWeatherTab() {
-  $('btn-refresh-weather').addEventListener('click', loadWeather);
+  safeOn('btn-refresh-weather', 'click', loadWeather);
 }
 
 async function loadWeather() {
   const display = $('weather-display');
+  if (!display) return;
   display.innerHTML = '<div class="spinner"></div><p>加载中…</p>';
   try {
     const data = await apiCall('api_weather');
@@ -980,7 +1152,8 @@ function renderWeather(data) {
     html = w.warning_msg + html;
   }
 
-  $('weather-display').innerHTML = html;
+  const display = $('weather-display');
+  if (display) display.innerHTML = html;
 
   // 渲染辐照度趋势图
   const chartDiv = $('weather-chart');
@@ -989,31 +1162,70 @@ function renderWeather(data) {
     Plotly.purge('weather-chart');
     const layout = adaptServerChartTheme(JSON.parse(JSON.stringify(data.chart.layout || {})));
     Plotly.newPlot('weather-chart', data.chart.data, layout, { responsive: true, displayModeBar: false });
-  } else {
-    $('weather-chart').innerHTML = '';
+  } else if (chartDiv) {
+    chartDiv.innerHTML = '';
   }
 }
 
 // ──────────────────────────────────────────────
-// Tab 5: 模型信息
+// Tab 5: 策略建议
 // ──────────────────────────────────────────────
-function initInfoTab() {
-  // 由 loadModelInfo 在页面加载时填充
+function initStrategyTab() {
+  safeOn('btn-generate-strategy', 'click', generateStrategy);
 }
 
-async function loadModelInfo() {
-  const display = $('model-info-display');
-  try {
-    const data = await apiCall('api_model_info');
-    if (data.success) {
-      STATE.modelInfo = data.info;
-      // 模型信息可能是 Markdown，使用 markdownToHTML 转换
-      display.innerHTML = markdownToHTML(data.info) || '<p>暂无模型信息</p>';
-    } else {
-      display.innerHTML = `<p class="error">${data.error || '加载失败'}</p>`;
-    }
-  } catch (e) {
-    console.error(e);
-    display.innerHTML = `<p class="error">${e.message}</p>`;
+async function generateStrategy() {
+  const display = $('strategy-display');
+  if (!display) return;
+
+  // 检查是否有预测结果
+  if (!STATE.predictResult || !STATE.predictResult.strategy) {
+    display.innerHTML = '<p style="color: var(--warning);">⚠️ 尚未执行预测，请先在「联合预测」Tab 中执行预测。</p>';
+    return;
+  }
+
+  const strategy = STATE.predictResult.strategy;
+  if (!strategy || strategy.length === 0) {
+    display.innerHTML = '<p style="color: var(--warning);">⚠️ 策略数据为空，请重新执行预测。</p>';
+    return;
+  }
+
+  renderStrategyTable(strategy);
+  setFooter('策略建议已生成', true);
+}
+
+function renderStrategyTable(strategy) {
+  const display = $('strategy-display');
+  if (!display) return;
+  if (!strategy || strategy.length === 0) {
+    display.innerHTML = '<p>无策略数据</p>';
+    return;
+  }
+
+  let html = '<table class="strategy-table"><thead><tr>';
+  html += '<th>时间</th><th>光伏 (kW)</th><th>负荷 (kW)</th><th>净负荷 (kW)</th><th>调度动作</th>';
+  html += '</tr></thead><tbody>';
+
+  strategy.forEach(row => {
+    const actionClass = row.action.includes('充电') ? 'action-charge'
+      : row.action.includes('放电') ? 'action-discharge'
+      : 'action-idle';
+    html += '<tr>';
+    html += `<td>${row.time}</td>`;
+    html += `<td>${row.solar.toFixed(1)}</td>`;
+    html += `<td>${row.load.toFixed(1)}</td>`;
+    html += `<td>${row.net.toFixed(1)}</td>`;
+    html += `<td class="${actionClass}">${row.action}</td>`;
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  display.innerHTML = html;
+}
+
+function renderStrategyDisplay() {
+  // 重绘策略数据（主题切换时）
+  if (STATE.predictResult && STATE.predictResult.strategy) {
+    renderStrategyTable(STATE.predictResult.strategy);
   }
 }

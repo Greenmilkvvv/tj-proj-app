@@ -102,7 +102,8 @@ body {
 
 /* ---------- Tab 导航 ---------- */
 #tab-nav {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   padding: 10px 24px 0 24px;
   background: var(--bg-primary);
@@ -115,7 +116,7 @@ body {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  padding: 10px 20px;
+  padding: 10px 4px;
   font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
@@ -124,6 +125,10 @@ body {
   white-space: nowrap;
   position: relative;
   top: 2px;
+  text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab-btn:hover { color: var(--text-primary); background: var(--bg-secondary); }

@@ -15,13 +15,13 @@
     <!-- ============================================================ -->
     <header id="header">
       <div class="header-left">
-        <h1>🌞 光储充智能预测系统</h1>
+        <h1><i data-lucide="sun" class="lucide-icon"></i> 光储充智能预测系统</h1>
         <span class="badge">Demo v1</span>
       </div>
       <div class="header-right">
         <span id="header-time">--</span>
         <span class="sep">|</span>
-        <span id="header-status">⚡ 就绪</span>
+        <span id="header-status"><i data-lucide="zap" class="lucide-icon"></i> 就绪</span>
         <span class="sep">|</span>
         <select id="theme-select">
           <option value="light">浅色</option>
@@ -31,18 +31,17 @@
     </header>
 
     <!-- ============================================================ -->
-    <!-- Tab 导航（严格 5 个选项卡，同 Test5） -->
+    <!-- Tab 导航 -->
     <!-- ============================================================ -->
     <nav id="tab-nav">
-      <button class="tab-btn active" data-tab="tab-predict">📊 联合预测</button>
-      <button class="tab-btn" data-tab="tab-data">💾 数据探索</button>
-      <button class="tab-btn" data-tab="tab-error">📉 误差分析</button>
-      <button class="tab-btn" data-tab="tab-weather">☀️ 气象数据</button>
-      <button class="tab-btn" data-tab="tab-strategy">💡 策略建议</button>
-      <button id="theme-toggle-mobile" class="tab-btn mobile-only">🌞/🌙</button>
+      <button class="tab-btn active" data-tab="tab-predict"><i data-lucide="trending-up" class="lucide-icon"></i> 联合预测</button>
+      <button class="tab-btn" data-tab="tab-data"><i data-lucide="database" class="lucide-icon"></i> 数据探索</button>
+      <button class="tab-btn" data-tab="tab-error"><i data-lucide="activity" class="lucide-icon"></i> 误差分析</button>
+      <button class="tab-btn" data-tab="tab-weather"><i data-lucide="cloud-sun" class="lucide-icon"></i> 气象数据</button>
+      <button class="tab-btn" data-tab="tab-strategy"><i data-lucide="lightbulb" class="lucide-icon"></i> 策略建议</button>
+      <button id="theme-toggle-mobile" class="tab-btn mobile-only"><i data-lucide="sun-moon" class="lucide-icon"></i></button>
     </nav>
 
-    <!-- ============================================================ -->
     <!-- ============================================================ -->
     <!-- Tab 1: 充放电预测 -->
     <!-- ============================================================ -->
@@ -51,7 +50,7 @@
 
         <!-- 左栏：控制面板 -->
         <div class="panel">
-          <h2>🎛️ 预测控制</h2>
+          <h2><i data-lucide="sliders-horizontal" class="lucide-icon"></i> 预测控制</h2>
           <hr>
           <div class="form-group">
             <label for="model-select">模型模式</label>
@@ -94,7 +93,7 @@
               <option value="45">45</option>
             </select>
           </div>
-          <button id="btn-predict" class="btn-primary">🔬 执行预测</button>
+          <button id="btn-predict" class="btn-primary"><i data-lucide="play" class="lucide-icon"></i> 执行预测</button>
           <div id="predict-error" class="error-box hidden"></div>
         </div>
 
@@ -137,7 +136,7 @@
          <!-- 卡片 1: 历史日负荷曲线 -->
         <div class="data-card">
           <div class="data-card-header">
-            <h2>📅 历史日负荷曲线</h2>
+            <h2><i data-lucide="calendar" class="lucide-icon"></i> 历史日负荷曲线</h2>
             <span id="daily-date-range-hint" style="font-size:12px; color:#888;"></span>
           </div>
           <p class="data-card-desc">支持两种模式：<b>聚合均值</b>展示多日趋势（均值±1σ），适合观察整体规律；<b>单日聚焦</b>查看特定某天的详细曲线。</p>
@@ -178,8 +177,8 @@
               <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:2px; flex-wrap:wrap;">
                 <button id="btn-daily-yesterday" class="btn-secondary" style="padding:6px 12px; font-size:12px;">昨天</button>
                 <button id="btn-daily-today" class="btn-secondary" style="padding:6px 12px; font-size:12px;">今天</button>
-                <button id="btn-daily-prev" class="btn-secondary" style="padding:6px 10px; font-size:12px;">◀ 前一天</button>
-                <button id="btn-daily-next" class="btn-secondary" style="padding:6px 10px; font-size:12px;">后一天 ▶</button>
+                <button id="btn-daily-prev" class="btn-secondary" style="padding:6px 10px; font-size:12px;"><i data-lucide="chevron-left" class="lucide-icon" style="margin:0;"></i> 前一天</button>
+                <button id="btn-daily-next" class="btn-secondary" style="padding:6px 10px; font-size:12px;">后一天 <i data-lucide="chevron-right" class="lucide-icon" style="margin:0 0 0 0.3em;"></i></button>
               </div>
             </div>
           </div>
@@ -189,7 +188,7 @@
         <!-- 卡片 2: Pearson 相关系数分析 -->
         <div class="data-card">
           <div class="data-card-header">
-            <h2>📊 Pearson 相关系数分析</h2>
+            <h2><i data-lucide="bar-chart-3" class="lucide-icon"></i> Pearson 相关系数分析</h2>
           </div>
           <p class="data-card-desc">展示各数值特征与充电负荷之间的线性相关程度。相关系数介于 −1 到 1，绝对值越接近 1 表明相关性越强，正值为正相关，负值为负相关。</p>
           <div id="chart-correlation" class="chart-box"></div>
@@ -198,7 +197,7 @@
         <!-- 卡片 3: 小时级负荷画像 -->
         <div class="data-card">
           <div class="data-card-header">
-            <h2>⏰ 小时级负荷画像</h2>
+            <h2><i data-lucide="clock" class="lucide-icon"></i> 小时级负荷画像</h2>
           </div>
           <p class="data-card-desc">按 24 小时分组统计历史充电负荷的均值与标准差（±1σ），反映负荷的典型日变化模式。可观察早晚高峰等规律性特征。</p>
           <div id="chart-hourly-profile" class="chart-box"></div>
@@ -213,11 +212,11 @@
     <section id="tab-error" class="tab-content">
       <div class="tab-grid-2col">
         <div class="panel">
-          <h2>🔍 误差分析</h2>
+          <h2><i data-lucide="search" class="lucide-icon"></i> 误差分析</h2>
           <hr>
-          <button id="btn-backtest-charging" class="btn-primary" style="margin-bottom:8px;">🔌 充电回测</button>
+          <button id="btn-backtest-charging" class="btn-primary" style="margin-bottom:8px;"><i data-lucide="plug" class="lucide-icon"></i> 充电回测</button>
           <br>
-          <button id="btn-backtest-solar" class="btn-primary" style="margin-bottom:8px;">☀️ 光伏回测</button>
+          <button id="btn-backtest-solar" class="btn-primary" style="margin-bottom:8px;"><i data-lucide="sun" class="lucide-icon"></i> 光伏回测</button>
           <hr>
           <p class="hint">误差指标</p>
           <div id="error-summary">
@@ -237,9 +236,9 @@
     <!-- ============================================================ -->
     <section id="tab-weather" class="tab-content">
       <div class="panel">
-        <h2>🌡️ 实时气象数据 & 天气预报</h2>
+        <h2><i data-lucide="thermometer" class="lucide-icon"></i> 实时气象数据 & 天气预报</h2>
         <hr>
-        <button id="btn-refresh-weather" class="btn-primary">🔄 刷新气象数据</button>
+        <button id="btn-refresh-weather" class="btn-primary"><i data-lucide="refresh-cw" class="lucide-icon"></i> 刷新气象数据</button>
         <div id="weather-display" class="weather-card">
           <div class="spinner"></div>
           <p>加载中…</p>
@@ -249,14 +248,13 @@
     </section>
 
     <!-- ============================================================ -->
-    <!-- ============================================================ -->
     <!-- Tab 5: 策略建议 -->
     <!-- ============================================================ -->
     <section id="tab-strategy" class="tab-content">
       <div class="panel">
-        <h2>💡 充放电调度策略建议</h2>
+        <h2><i data-lucide="lightbulb" class="lucide-icon"></i> 充放电调度策略建议</h2>
         <hr>
-        <button id="btn-generate-strategy" class="btn-primary">📋 生成策略建议</button>
+        <button id="btn-generate-strategy" class="btn-primary"><i data-lucide="clipboard-list" class="lucide-icon"></i> 生成策略建议</button>
         <p class="hint" style="margin-top:8px;">请先在「联合预测」Tab 执行预测，再点击按钮生成策略建议</p>
         <div id="strategy-display" style="margin-top:16px;">
           <p style="color: var(--text-secondary);">尚未生成策略建议</p>
@@ -268,11 +266,14 @@
     <!-- 底部状态栏 -->
     <!-- ============================================================ -->
     <footer id="footer">
-      <span id="footer-api-status">API: 🟢 正常</span>
+      <span id="footer-api-status">API: <span class="status-dot green"></span> 正常</span>
       <span id="footer-msg"></span>
     </footer>
   </div>
 
   <script src="/js/app.js"></script>
+  <!-- Lucide 图标 (零本地依赖 CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>lucide.createIcons();</script>
 </body>
 </html>

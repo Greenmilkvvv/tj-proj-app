@@ -106,10 +106,10 @@ function setFooter(msg, ok = true) {
   const msgEl = $('footer-msg');
   if (!el || !msgEl) return;
   if (ok) {
-    el.innerHTML = '🟢 API: 正常';
+    el.innerHTML = '<span class="status-dot green"></span> API: 正常';
     el.style.color = 'var(--success)';
   } else {
-    el.innerHTML = '🔴 API: 异常';
+    el.innerHTML = '<span class="status-dot red"></span> API: 异常';
     el.style.color = 'var(--danger)';
   }
   msgEl.textContent = msg || '';
@@ -131,7 +131,7 @@ function disableBtn(id) {
   const el = $(id);
   if (!el) return;
   el.disabled = true;
-  el.textContent = '⏳ 处理中…';
+  el.textContent = '处理中…';
 }
 
 function enableBtn(id, text) {
@@ -299,7 +299,7 @@ async function runPrediction() {
   const loadInput = $('load-input');
   if (!modelSel || !stepsSel || !priceInput || !loadInput) {
     showError('predict-error', '表单元素缺失，请刷新页面');
-    enableBtn('btn-predict', '🔬 执行预测');
+    enableBtn('btn-predict', '执行预测');
     return;
   }
   const model = modelSel.value;
@@ -330,7 +330,7 @@ async function runPrediction() {
       renderJointChart(data);
       setFooter('预测完成', true);
       const hs = $('header-status');
-      if (hs) hs.innerHTML = '✅ 预测就绪';
+      if (hs) hs.innerHTML = '预测就绪';
     }
   } catch (e) {
     console.error(e);
@@ -341,7 +341,7 @@ async function runPrediction() {
     resetKPIs();
     setFooter(e.message, false);
   } finally {
-    enableBtn('btn-predict', '🔬 执行预测');
+    enableBtn('btn-predict', '执行预测');
   }
 }
 
@@ -675,7 +675,7 @@ function renderStrategyChart(data) {
     type: 'scatter',
     mode: 'markers',
     marker: { size: 0 },
-    name: '🟢 储能 | 🔴 放电 | 🟡 购电 | ⬜ 待机',
+    name: '· 储能 | · 放电 | · 购电 | · 待机',
   });
 
   Plotly.newPlot('chart-strategy', traces, layout, { responsive: true, displayModeBar: false });
@@ -1180,13 +1180,13 @@ async function generateStrategy() {
 
   // 检查是否有预测结果
   if (!STATE.predictResult || !STATE.predictResult.strategy) {
-    display.innerHTML = '<p style="color: var(--warning);">⚠️ 尚未执行预测，请先在「联合预测」Tab 中执行预测。</p>';
+    display.innerHTML = '<p style="color: var(--warning);">尚未执行预测，请先在「联合预测」Tab 中执行预测。</p>';
     return;
   }
 
   const strategy = STATE.predictResult.strategy;
   if (!strategy || strategy.length === 0) {
-    display.innerHTML = '<p style="color: var(--warning);">⚠️ 策略数据为空，请重新执行预测。</p>';
+    display.innerHTML = '<p style="color: var(--warning);">策略数据为空，请重新执行预测。</p>';
     return;
   }
 

@@ -1,0 +1,10 @@
+service: "service:svc"
+description: "光储充智能预测系统 v4 - 纯HTML+CSS+JS 5-Tab UI + BentoML"
+labels:
+  owner: tj-proj
+  project: solar-charging-demo-v4
+include:
+  - "*.py"
+  - "static/**"
+python:
+  requirements_txt: "./requirements.txt"

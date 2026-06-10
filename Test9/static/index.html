@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>光储充智能预测 Demo v1</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+</head>
+<body>
+
+  <div id="app">
+    <!-- ============================================================ -->
+    <!-- 顶部标题栏 -->
+    <!-- ============================================================ -->
+    <header id="header">
+      <div class="header-left">
+        <h1>🌞 光储充智能预测系统</h1>
+        <span class="badge">Demo v1</span>
+      </div>
+      <div class="header-right">
+        <span id="header-time">--</span>
+        <span class="sep">|</span>
+        <span id="header-status">⚡ 就绪</span>
+        <span class="sep">|</span>
+        <select id="theme-select">
+          <option value="light">浅色</option>
+          <option value="dark" selected>深色</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- ============================================================ -->
+    <!-- Tab 导航（严格 5 个选项卡，同 Test5） -->
+    <!-- ============================================================ -->
+    <nav id="tab-nav">
+      <button class="tab-btn active" data-tab="tab-predict">📊 联合预测</button>
+      <button class="tab-btn" data-tab="tab-data">💾 数据探索</button>
+      <button class="tab-btn" data-tab="tab-error">📉 误差分析</button>
+      <button class="tab-btn" data-tab="tab-weather">☀️ 气象数据</button>
+      <button class="tab-btn" data-tab="tab-strategy">💡 策略建议</button>
+      <button id="theme-toggle-mobile" class="tab-btn mobile-only">🌞/🌙</button>
+    </nav>
+
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Tab 1: 充放电预测 -->
+    <!-- ============================================================ -->
+    <section id="tab-predict" class="tab-content active">
+      <div class="tab-grid-2col">
+
+        <!-- 左栏：控制面板 -->
+        <div class="panel">
+          <h2>🎛️ 预测控制</h2>
+          <hr>
+          <div class="form-group">
+            <label for="model-select">模型模式</label>
+            <select id="model-select">
+              <option value="combined">光伏 + 充电联合预测</option>
+              <option value="solar_only">仅光伏预测</option>
+              <option value="charging_only">仅充电预测</option>
+            </select>
+          </div>
+           <div class="form-group">
+             <label for="steps-select">预测步数</label>
+             <select id="steps-select">
+               <option value="1">15min 单步</option>
+               <option value="4">1h 预测</option>
+               <option value="96" selected>24h 预测</option>
+             </select>
+           </div>
+          <div class="form-group">
+            <label for="price-input">当前电价 (元/kWh)</label>
+            <input type="number" id="price-input" value="0.63" step="0.01" min="0" max="3">
+          </div>
+          <div class="form-group">
+            <label for="load-input">当前充电负载 (kW)</label>
+            <input type="number" id="load-input" value="875" step="1" min="0">
+          </div>
+          <div class="form-group">
+            <label for="date-picker">预测起始日期</label>
+            <input type="date" id="date-picker">
+          </div>
+          <div class="form-group">
+            <label for="hour-picker">预测起始小时</label>
+            <input type="number" id="hour-picker" value="9" min="0" max="23" step="1">
+          </div>
+          <div class="form-group">
+            <label for="minute-picker">预测起始分钟</label>
+            <select id="minute-picker">
+              <option value="0" selected>00</option>
+              <option value="15">15</option>
+              <option value="30">30</option>
+              <option value="45">45</option>
+            </select>
+          </div>
+          <button id="btn-predict" class="btn-primary">🔬 执行预测</button>
+          <div id="predict-error" class="error-box hidden"></div>
+        </div>
+
+        <!-- 右栏：关键指标卡片 + 图表 -->
+        <div class="panel-stack">
+          <div class="kpi-row" id="kpi-row">
+            <div class="kpi-card" id="kpi-total-solar">
+              <span class="kpi-value" id="kpi-total-solar-value">--</span>
+              <span class="kpi-unit">kWh</span>
+              <span class="kpi-label">总光伏发电</span>
+            </div>
+            <div class="kpi-card" id="kpi-total-load">
+              <span class="kpi-value" id="kpi-total-load-value">--</span>
+              <span class="kpi-unit">kWh</span>
+              <span class="kpi-label">总充电负荷</span>
+            </div>
+             <div class="kpi-card" id="kpi-solar-peak">
+              <span class="kpi-value" id="kpi-solar-peak-value">--</span>
+              <span class="kpi-unit">kW</span>
+              <span class="kpi-label">光伏峰值</span>
+            </div>
+          </div>
+          <!-- Row 1: 光伏 (左) + 充电负荷 (右) 并排 -->
+          <div class="chart-row-2col">
+            <div id="chart-solar-only" class="chart-box chart-half"></div>
+            <div id="chart-charging-only" class="chart-box chart-half"></div>
+          </div>
+          <!-- Row 2: 联合分布 (全宽，含净负荷) -->
+          <div id="chart-joint" class="chart-box chart-full"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Tab 2: 数据探索 -->
+    <!-- ============================================================ -->
+    <section id="tab-data" class="tab-content">
+      <div class="data-explore-stack">
+
+         <!-- 卡片 1: 历史日负荷曲线 -->
+        <div class="data-card">
+          <div class="data-card-header">
+            <h2>📅 历史日负荷曲线</h2>
+            <span id="daily-date-range-hint" style="font-size:12px; color:#888;"></span>
+          </div>
+          <p class="data-card-desc">支持两种模式：<b>聚合均值</b>展示多日趋势（均值±1σ），适合观察整体规律；<b>单日聚焦</b>查看特定某天的详细曲线。</p>
+          <div class="date-picker-area" style="margin-bottom:12px;">
+            <!-- 模式切换 -->
+            <div style="margin-bottom:10px;">
+              <label style="margin-right:8px; font-weight:600;">查看模式</label>
+              <label class="radio-inline" style="margin-right:16px; cursor:pointer;">
+                <input type="radio" name="daily-mode" value="aggregated" checked> 聚合均值（推荐）
+              </label>
+              <label class="radio-inline" style="cursor:pointer;">
+                <input type="radio" name="daily-mode" value="single"> 单日聚焦
+              </label>
+            </div>
+            <!-- 聚合模式：日期范围 -->
+            <div id="daily-range-group" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+              <div class="form-group" style="margin:0;">
+                <label for="daily-start-date">起始日期</label>
+                <input type="date" id="daily-start-date">
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label for="daily-end-date">结束日期</label>
+                <input type="date" id="daily-end-date">
+              </div>
+              <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:2px; flex-wrap:wrap;">
+                <button id="btn-week" class="btn-secondary" style="padding:6px 12px; font-size:12px;">本周</button>
+                <button id="btn-month" class="btn-secondary" style="padding:6px 12px; font-size:12px;">本月</button>
+                <button id="btn-last-7-days" class="btn-secondary" style="padding:6px 12px; font-size:12px;">近7天</button>
+                <button id="btn-last-30-days" class="btn-secondary" style="padding:6px 12px; font-size:12px;">近30天</button>
+              </div>
+            </div>
+            <!-- 单日模式：单个日期 -->
+            <div id="daily-single-group" style="display:none; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+              <div class="form-group" style="margin:0;">
+                <label for="daily-single-date">选择日期</label>
+                <input type="date" id="daily-single-date">
+              </div>
+              <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:2px; flex-wrap:wrap;">
+                <button id="btn-daily-yesterday" class="btn-secondary" style="padding:6px 12px; font-size:12px;">昨天</button>
+                <button id="btn-daily-today" class="btn-secondary" style="padding:6px 12px; font-size:12px;">今天</button>
+                <button id="btn-daily-prev" class="btn-secondary" style="padding:6px 10px; font-size:12px;">◀ 前一天</button>
+                <button id="btn-daily-next" class="btn-secondary" style="padding:6px 10px; font-size:12px;">后一天 ▶</button>
+              </div>
+            </div>
+          </div>
+          <div id="chart-daily-load" class="chart-box"></div>
+        </div>
+
+        <!-- 卡片 2: Pearson 相关系数分析 -->
+        <div class="data-card">
+          <div class="data-card-header">
+            <h2>📊 Pearson 相关系数分析</h2>
+          </div>
+          <p class="data-card-desc">展示各数值特征与充电负荷之间的线性相关程度。相关系数介于 −1 到 1，绝对值越接近 1 表明相关性越强，正值为正相关，负值为负相关。</p>
+          <div id="chart-correlation" class="chart-box"></div>
+        </div>
+
+        <!-- 卡片 3: 小时级负荷画像 -->
+        <div class="data-card">
+          <div class="data-card-header">
+            <h2>⏰ 小时级负荷画像</h2>
+          </div>
+          <p class="data-card-desc">按 24 小时分组统计历史充电负荷的均值与标准差（±1σ），反映负荷的典型日变化模式。可观察早晚高峰等规律性特征。</p>
+          <div id="chart-hourly-profile" class="chart-box"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Tab 3: 误差分析 -->
+    <!-- ============================================================ -->
+    <section id="tab-error" class="tab-content">
+      <div class="tab-grid-2col">
+        <div class="panel">
+          <h2>🔍 误差分析</h2>
+          <hr>
+          <button id="btn-backtest-charging" class="btn-primary" style="margin-bottom:8px;">🔌 充电回测</button>
+          <br>
+          <button id="btn-backtest-solar" class="btn-primary" style="margin-bottom:8px;">☀️ 光伏回测</button>
+          <hr>
+          <p class="hint">误差指标</p>
+          <div id="error-summary">
+            <p>点击上方按钮查看回测误差指标</p>
+          </div>
+        </div>
+        <div class="panel-stack">
+          <div id="chart-backtest" class="chart-box"></div>
+          <div id="chart-error-dist" class="chart-box"></div>
+          <div id="chart-error-hourly" class="chart-box"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Tab 4: 气象数据 -->
+    <!-- ============================================================ -->
+    <section id="tab-weather" class="tab-content">
+      <div class="panel">
+        <h2>🌡️ 实时气象数据 & 天气预报</h2>
+        <hr>
+        <button id="btn-refresh-weather" class="btn-primary">🔄 刷新气象数据</button>
+        <div id="weather-display" class="weather-card">
+          <div class="spinner"></div>
+          <p>加载中…</p>
+        </div>
+        <div id="weather-chart" class="chart-container" style="margin-top:16px;"></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Tab 5: 策略建议 -->
+    <!-- ============================================================ -->
+    <section id="tab-strategy" class="tab-content">
+      <div class="panel">
+        <h2>💡 充放电调度策略建议</h2>
+        <hr>
+        <button id="btn-generate-strategy" class="btn-primary">📋 生成策略建议</button>
+        <p class="hint" style="margin-top:8px;">请先在「联合预测」Tab 执行预测，再点击按钮生成策略建议</p>
+        <div id="strategy-display" style="margin-top:16px;">
+          <p style="color: var(--text-secondary);">尚未生成策略建议</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 底部状态栏 -->
+    <!-- ============================================================ -->
+    <footer id="footer">
+      <span id="footer-api-status">API: 🟢 正常</span>
+      <span id="footer-msg"></span>
+    </footer>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

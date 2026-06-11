@@ -56,8 +56,6 @@
             <label for="model-select">模型模式</label>
             <select id="model-select">
               <option value="combined">光伏 + 充电联合预测</option>
-              <option value="solar_only">仅光伏预测</option>
-              <option value="charging_only">仅充电预测</option>
             </select>
           </div>
            <div class="form-group">
@@ -75,23 +73,6 @@
           <div class="form-group">
             <label for="load-input">当前充电负载 (kW)</label>
             <input type="number" id="load-input" value="875" step="1" min="0">
-          </div>
-          <div class="form-group">
-            <label for="date-picker">预测起始日期</label>
-            <input type="date" id="date-picker">
-          </div>
-          <div class="form-group">
-            <label for="hour-picker">预测起始小时</label>
-            <input type="number" id="hour-picker" value="9" min="0" max="23" step="1">
-          </div>
-          <div class="form-group">
-            <label for="minute-picker">预测起始分钟</label>
-            <select id="minute-picker">
-              <option value="0" selected>00</option>
-              <option value="15">15</option>
-              <option value="30">30</option>
-              <option value="45">45</option>
-            </select>
           </div>
           <button id="btn-predict" class="btn-primary"><i data-lucide="play" class="lucide-icon"></i> 执行预测</button>
           <div id="predict-error" class="error-box hidden"></div>

@@ -1,0 +1,94 @@
+{
+  "project_root": "D:\\AAA_proj_tongji\\tj-proj-app\\Test9",
+  "selection_required": true,
+  "model_selection_required": true,
+  "confirmation_required": true,
+  "user_confirmed": true,
+  "target_pages": 60,
+  "lines_per_page": 50,
+  "target_lines": 3000,
+  "estimated_selected_lines": 4889,
+  "estimated_selected_pages": 98,
+  "estimated_all_candidate_lines": 4905,
+  "estimated_all_candidate_pages": 99,
+  "supplement_rule": "模型优先选择能体现软件核心功能和真实运行逻辑的源码；不足60页时再从其他相关源码中补充；候选源码仍不足时才生成全部代码材料。",
+  "confirmation_stage": "code-selection",
+  "next_action": "请由模型填写 草稿/代码文件选择.json 的抽取选择和选择理由，再让用户确认；确认后运行 confirm_stage.py --stage code-selection。",
+  "instructions": "The script only inventories source files. The model must choose selected/model_reason before user confirmation. Selected files are copied in full.",
+  "files": [
+    {
+      "path": "static/index.html",
+      "selected": true,
+      "line_count": 260,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "入口HTML文件，定义5个Tab页面结构（联合预测/气象数据/数据探索/误差分析/策略建议），体现软件页面布局和UI组织",
+      "model_reason": "前端入口文件，定义全部5个功能Tab的页面结构和导航，是软件UI的核心骨架"
+    },
+    {
+      "path": "static/js/app.js",
+      "selected": true,
+      "line_count": 1231,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "前端核心逻辑文件，包含Tab切换、Plotly图表渲染、API调用、预测按钮交互、策略建议生成、主题切换等全部前端交互",
+      "model_reason": "前端核心交互逻辑，实现联合预测/数据探索/误差分析/气象数据/策略建议5个Tab的API调用和Plotly图表渲染"
+    },
+    {
+      "path": "static/css/style.css",
+      "selected": true,
+      "line_count": 636,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件，定义Tab导航、表单控件、图表容器、策略表格、气象卡片等全部UI组件样式和响应式布局",
+      "model_reason": "样式文件，定义软件全部UI组件的视觉样式、Tab导航布局和响应式设计"
+    },
+    {
+      "path": "config.py",
+      "selected": true,
+      "line_count": 84,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "配置文件，定义模型路径、预测步数选项、数据文件路径、气象坐标等系统配置参数",
+      "model_reason": "补充后端源码，定义预测模型路径、步数选项、气象坐标等核心配置参数"
+    },
+    {
+      "path": "data_service.py",
+      "selected": true,
+      "line_count": 1262,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "数据服务核心文件，实现数据集概览、单日负荷查询、聚合负荷统计、日负荷对比、特征相关性分析、24小时负荷画像、回测和误差分析等全部数据功能",
+      "model_reason": "补充后端源码，实现数据探索和误差分析Tab的全部数据处理逻辑，包括回测、误差分布、相关性分析等"
+    },
+    {
+      "path": "prediction_service.py",
+      "selected": true,
+      "line_count": 835,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "预测服务核心文件，实现多步迭代预测、光伏预测、充电预测、绿电消纳比例计算和储能调度策略生成",
+      "model_reason": "补充后端源码，实现联合预测核心逻辑：多步迭代预测、光伏/充电模型调用、策略生成算法"
+    },
+    {
+      "path": "service.py",
+      "selected": true,
+      "line_count": 350,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "BentoML服务入口，定义全部14个REST API端点（气象/预测/数据探索/误差分析），实现服务生命周期管理",
+      "model_reason": "补充后端源码，BentoML服务入口，定义全部API路由和服务启动逻辑"
+    },
+    {
+      "path": "weather_service.py",
+      "selected": true,
+      "line_count": 231,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "气象服务文件，通过Open-Meteo API实时获取宁波站点的温度、辐照度、云量、降雨量及未来预报数据",
+      "model_reason": "补充后端源码，实现气象数据获取功能，调用Open-Meteo API获取实时气象和预报数据"
+    }
+  ],
+  "confirmation_note": "用户确认了8个文件的代码选择：前端3个(index.html/app.js/style.css)+后端5个(config/data_service/prediction_service/service/weather_service)",
+  "confirmed_at": "2026-06-11T15:47:52+00:00"
+}

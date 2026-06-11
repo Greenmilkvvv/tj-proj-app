@@ -1,0 +1,96 @@
+{
+  "software_name": "光储充智能预测系统",
+  "version": "V1.0",
+  "project_root": "D:\\AAA_proj_tongji\\tj-proj-app\\Test9",
+  "file_count": 8,
+  "material_line_count": 4905,
+  "source_line_count": 4889,
+  "selected_source_line_count": 4889,
+  "lines_per_page": 50,
+  "total_pages": 99,
+  "target_pages": 60,
+  "available_candidate_line_count": 4905,
+  "available_candidate_pages": 99,
+  "supplement_status": "候选源码可达到前30页/后30页要求",
+  "mode": "front30_back30",
+  "selection_file": "Software_Copyright\\Test9\\草稿\\代码文件选择.json",
+  "outputs": [
+    "代码-前30页.md",
+    "代码-后30页.md"
+  ],
+  "files": [
+    {
+      "path": "static/index.html",
+      "source_line_count": 260,
+      "selected_line_start": 1,
+      "selected_line_end": 260,
+      "selected_line_count": 260,
+      "material_line_start": 1,
+      "material_line_end": 262
+    },
+    {
+      "path": "static/js/app.js",
+      "source_line_count": 1231,
+      "selected_line_start": 1,
+      "selected_line_end": 1231,
+      "selected_line_count": 1231,
+      "material_line_start": 263,
+      "material_line_end": 1495
+    },
+    {
+      "path": "static/css/style.css",
+      "source_line_count": 636,
+      "selected_line_start": 1,
+      "selected_line_end": 636,
+      "selected_line_count": 636,
+      "material_line_start": 1496,
+      "material_line_end": 2133
+    },
+    {
+      "path": "config.py",
+      "source_line_count": 84,
+      "selected_line_start": 1,
+      "selected_line_end": 84,
+      "selected_line_count": 84,
+      "material_line_start": 2134,
+      "material_line_end": 2219
+    },
+    {
+      "path": "data_service.py",
+      "source_line_count": 1262,
+      "selected_line_start": 1,
+      "selected_line_end": 1262,
+      "selected_line_count": 1262,
+      "material_line_start": 2220,
+      "material_line_end": 3483
+    },
+    {
+      "path": "prediction_service.py",
+      "source_line_count": 835,
+      "selected_line_start": 1,
+      "selected_line_end": 835,
+      "selected_line_count": 835,
+      "material_line_start": 3484,
+      "material_line_end": 4320
+    },
+    {
+      "path": "service.py",
+      "source_line_count": 350,
+      "selected_line_start": 1,
+      "selected_line_end": 350,
+      "selected_line_count": 350,
+      "material_line_start": 4321,
+      "material_line_end": 4672
+    },
+    {
+      "path": "weather_service.py",
+      "source_line_count": 231,
+      "selected_line_start": 1,
+      "selected_line_end": 231,
+      "selected_line_count": 231,
+      "material_line_start": 4673,
+      "material_line_end": 4905
+    }
+  ],
+  "safe_software_filename": "光储充智能预测系统"
+}

@@ -1,0 +1,36 @@
+{
+  "software_name": "光储充智能预测系统",
+  "project_root": "D:\\AAA_proj_tongji\\tj-proj-app\\Test9",
+  "instruction": "本文件只收集证据，不决定行业、功能或手册结构。请由模型阅读这些证据以及必要的项目源码后，另行编写业务理解模型稿。",
+  "documents": [
+    {
+      "path": "requirements.txt",
+      "size": 93,
+      "headings": [],
+      "opening": "numpy==1.26.4 pandas==2.0.3 plotly==6.3.1 torch==2.1.0 requests==2.31.0 bentoml =1.4.0"
+    }
+  ],
+  "code_evidence": {
+    "project_name": "Test9",
+    "software_name_candidate": "Test9",
+    "frameworks": [],
+    "language": "JavaScript、Python",
+    "routes": [
+      "/"
+    ],
+    "feature_name_candidates": [],
+    "entry_files": [],
+    "page_files": [],
+    "component_files": [],
+    "api_files": [],
+    "run_command_candidates": [],
+    "package": {
+      "name": "",
+      "path": "",
+      "version": "V1.0",
+      "scripts": {},
+      "dependency_names": []
+    }
+  },
+  "external_research_notes": ""
+}
